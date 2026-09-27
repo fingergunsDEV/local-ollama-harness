@@ -1,0 +1,10 @@
+extracted_zip/
+harness/
+.harness-snapshots/
+workspace/
+data/
+*.egg-info/
+__pycache__/
+.pytest_cache/
+node_modules/
+.next/
