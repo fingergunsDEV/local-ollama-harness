@@ -1,0 +1,14 @@
+extracted/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+node_modules/
+.next/
+dist/
+build/
+*.db
+*.jsonl
+.env
+.env.local
+workspace/
