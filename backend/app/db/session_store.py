@@ -136,15 +136,170 @@ class SessionStore:
     def add_audit(self, record: dict[str, Any]) -> None:
         self._execute("INSERT INTO audit_log VALUES(?,?,?,?,?,?,?,?,?)", (str(uuid.uuid4()), record.get("session_id"), record["actor"], record["action_type"], record.get("tool_name"), record.get("target"), record["result"], json.dumps(record, sort_keys=True), record["timestamp"]))
 
-    def audit_entries(self, session_id: str | None = None, query: str = "") -> list[dict[str, Any]]:
-        where, values = "", []
-        if session_id:
-            where += " WHERE session_id=?"; values.append(session_id)
-        if query:
-            where += (" AND " if where else " WHERE ") + "(target LIKE ? OR action_type LIKE ? OR result LIKE ?)"; values += [f"%{query}%"] * 3
+    def export_session_json(self, session_id: str) -> dict[str, Any] | None:
+        session = self.get_session(session_id)
+        if not session:
+            return None
+        messages = self.messages(session_id)
         with self._lock, self._connect() as conn:
-            rows = conn.execute("SELECT * FROM audit_log" + where + " ORDER BY created_at DESC LIMIT 500", values).fetchall()
+            tool_rows = conn.execute("SELECT * FROM tool_calls WHERE session_id=? ORDER BY created_at", (session_id,)).fetchall()
+        tool_calls = [self._row(r) for r in tool_rows]
+        return {
+            "session": session,
+            "messages": messages,
+            "tool_calls": tool_calls,
+        }
+
+    def export_session_markdown(self, session_id: str) -> str | None:
+        exported = self.export_session_json(session_id)
+        if not exported:
+            return None
+        session = exported["session"]
+        messages = exported["messages"]
+        tool_calls = exported["tool_calls"]
+
+        lines = [
+            f"# Session Transcript: {session['id']}",
+            f"- **Model**: {session['model']}",
+            f"- **Status**: {session['status']}",
+            f"- **Dry Run**: {session['dry_run']}",
+            f"- **Created At**: {session['created_at']}",
+            "",
+            "---",
+            "",
+            "## Transcript",
+            "",
+        ]
+
+        # Map tool calls by message_id or list chronologically
+        for msg in messages:
+            role_label = msg["role"].capitalize()
+            lines.append(f"### {role_label} ({msg['created_at']})")
+            lines.append(msg["content"])
+            lines.append("")
+
+        if tool_calls:
+            lines.append("## Executed Tool Calls")
+            lines.append("")
+            for tool in tool_calls:
+                lines.append(f"### Tool: `{tool['tool_name']}` ({tool['status']})")
+                lines.append(f"**Params:** `{json.dumps(tool.get('params_json', {}))}`")
+                if tool.get("result_json"):
+                    lines.append(f"**Result:** ```json\n{json.dumps(tool['result_json'], indent=2)}\n```")
+                lines.append("")
+
+        return "\n".join(lines)
+
+    def fork_session(self, session_id: str, until_message_id: str | None = None) -> dict[str, Any] | None:
+        parent = self.get_session(session_id)
+        if not parent:
+            return None
+
+        messages = self.messages(session_id)
+        if until_message_id:
+            cutoff = None
+            for idx, msg in enumerate(messages):
+                if msg["id"] == until_message_id:
+                    cutoff = idx + 1
+                    break
+            if cutoff is not None:
+                messages = messages[:cutoff]
+
+        new_session = self.create_session(
+            model=parent["model"],
+            dry_run=bool(parent["dry_run"]),
+            workspace_root=parent["workspace_root"],
+        )
+
+        for msg in messages:
+            self.add_message(
+                session_id=new_session["id"],
+                role=msg["role"],
+                content=msg["content"],
+                token_count=msg.get("token_count", 0),
+            )
+
+        return new_session
+
+    def audit_entries(
+        self,
+        session_id: str | None = None,
+        query: str = "",
+        action_type: str | None = None,
+        result: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        where_clauses: list[str] = []
+        values: list[Any] = []
+
+        if session_id:
+            where_clauses.append("session_id=?")
+            values.append(session_id)
+        if query:
+            where_clauses.append("(target LIKE ? OR action_type LIKE ? OR result LIKE ? OR actor LIKE ?)")
+            values.extend([f"%{query}%"] * 4)
+        if action_type:
+            where_clauses.append("action_type=?")
+            values.append(action_type)
+        if result:
+            where_clauses.append("result=?")
+            values.append(result)
+        if start_date:
+            where_clauses.append("created_at >= ?")
+            values.append(start_date)
+        if end_date:
+            where_clauses.append("created_at <= ?")
+            values.append(end_date)
+
+        where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+        sql = f"SELECT * FROM audit_log{where_sql} ORDER BY created_at DESC LIMIT ?"
+        values.append(limit)
+
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(sql, values).fetchall()
         return [self._row(row) for row in rows]
+
+    def export_audit_csv(
+        self,
+        session_id: str | None = None,
+        query: str = "",
+        action_type: str | None = None,
+        result: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> str:
+        import csv
+        import io
+
+        entries = self.audit_entries(
+            session_id=session_id,
+            query=query,
+            action_type=action_type,
+            result=result,
+            start_date=start_date,
+            end_date=end_date,
+            limit=5000,
+        )
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["id", "timestamp", "session_id", "actor", "action_type", "tool_name", "target", "result"])
+
+        for entry in entries:
+            writer.writerow([
+                entry.get("id", ""),
+                entry.get("created_at", ""),
+                entry.get("session_id", ""),
+                entry.get("actor", ""),
+                entry.get("action_type", ""),
+                entry.get("tool_name", ""),
+                entry.get("target", ""),
+                entry.get("result", ""),
+            ])
+
+        return output.getvalue()
 
     @staticmethod
     def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:

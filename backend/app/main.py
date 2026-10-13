@@ -5,7 +5,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -41,6 +41,9 @@ class SnapshotRestore(BaseModel):
     snapshot_id: str = Field(min_length=1, max_length=300)
     path: str = Field(min_length=1, max_length=1000)
 
+class ForkSessionRequest(BaseModel):
+    until_message_id: str | None = None
+
 class SemanticSearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=500)
     top_k: int = Field(default=5, ge=1, le=50)
@@ -69,8 +72,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Local Ollama Agent Harness", version="0.1.0", lifespan=lifespan)
-settings_for_cors = get_settings()
-app.add_middleware(CORSMiddleware, allow_origins=[settings_for_cors.frontend_origin], allow_credentials=False, allow_methods=["GET", "POST"], allow_headers=["Content-Type"])
+try:
+    frontend_origin = get_settings().frontend_origin
+except Exception:
+    frontend_origin = "http://localhost:3000"
+app.add_middleware(CORSMiddleware, allow_origins=[frontend_origin], allow_credentials=False, allow_methods=["GET", "POST"], allow_headers=["Content-Type"])
 
 
 def runtime() -> Runtime: return app.state.runtime
@@ -136,6 +142,30 @@ async def create_session(request: CreateSession) -> dict[str, Any]:
 async def get_session(session_id: str) -> dict[str, Any]:
     session = session_or_404(session_id); return {"session": session, "messages": runtime().store.messages(session_id)}
 
+@app.get("/api/sessions/{session_id}/export")
+async def export_session(session_id: str, format: str = Query("markdown", pattern="^(markdown|json)$")) -> Any:
+    session_or_404(session_id)
+    if format == "json":
+        data = runtime().store.export_session_json(session_id)
+        if not data:
+            raise HTTPException(404, "Session export failed")
+        return data
+    else:
+        md = runtime().store.export_session_markdown(session_id)
+        if md is None:
+            raise HTTPException(404, "Session export failed")
+        return Response(content=md, media_type="text/markdown", headers={"Content-Disposition": f'attachment; filename="session-{session_id[:8]}.md"'})
+
+@app.post("/api/sessions/{session_id}/fork")
+async def fork_session(session_id: str, request: ForkSessionRequest | None = None) -> dict[str, Any]:
+    session_or_404(session_id)
+    until_id = request.until_message_id if request else None
+    forked = runtime().store.fork_session(session_id, until_message_id=until_id)
+    if not forked:
+        raise HTTPException(400, "Failed to fork session")
+    runtime().audit.log(session_id=forked["id"], actor="user", action_type="session_fork", tool_name=None, target=session_id, result="success", dry_run=forked["dry_run"])
+    return forked
+
 @app.post("/api/sessions/{session_id}/dry-run")
 async def update_dry_run(session_id: str, request: DryRunUpdate) -> dict[str, Any]:
     session_or_404(session_id); runtime().store.set_dry_run(session_id, request.dry_run)
@@ -174,7 +204,56 @@ async def restore_snapshot(request: SnapshotRestore) -> dict[str, Any]:
     return result
 
 @app.get("/api/audit")
-async def audit(session_id: str | None = None, query: str = "") -> dict[str, Any]: return {"entries": runtime().store.audit_entries(session_id, query)}
+async def audit(
+    session_id: str | None = None,
+    query: str = "",
+    action_type: str | None = None,
+    result: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "entries": runtime().store.audit_entries(
+            session_id=session_id,
+            query=query,
+            action_type=action_type,
+            result=result,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    }
+
+@app.get("/api/audit/export")
+async def export_audit(
+    format: str = Query("csv", pattern="^(csv|json)$"),
+    session_id: str | None = None,
+    query: str = "",
+    action_type: str | None = None,
+    result: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> Any:
+    if format == "csv":
+        csv_data = runtime().store.export_audit_csv(
+            session_id=session_id,
+            query=query,
+            action_type=action_type,
+            result=result,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        return Response(content=csv_data, media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="audit_log.csv"'})
+    else:
+        entries = runtime().store.audit_entries(
+            session_id=session_id,
+            query=query,
+            action_type=action_type,
+            result=result,
+            start_date=start_date,
+            end_date=end_date,
+            limit=5000,
+        )
+        return {"entries": entries}
 
 @app.get("/api/files")
 async def files(path: str = ".", depth: int = 3) -> dict[str, Any]:
