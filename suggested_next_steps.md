@@ -3,32 +3,31 @@
 ## Executive Overview
 The **Local Ollama Agent Harness** is a privacy-first, local-only coding agent platform that pairs a Next.js/Tailwind control plane with a FastAPI backend constrained to a workspace sandbox and loopback Ollama daemon.
 
-Following an exhaustive scan of the backend Python codebase (`app/`) and Next.js frontend (`frontend/`), this document outlines key areas of improvement across core capabilities, security/sandboxing, indexing/search, user interface, and operational resilience.
+Following an exhaustive scan of the backend Python codebase (`backend/app/`) and Next.js frontend (`frontend/`), this document outlines key areas of improvement across core capabilities, security/sandboxing, indexing/search, user interface, and operational resilience.
 
 ---
 
 ## Key Improvement Areas
 
 ### 1. Semantic Codebase Indexing & Hybrid Search (Priority 1)
-* **Current State:** `backend/app/indexing/embeddings.py` is an empty stub ("Semantic indexing is intentionally optional and disabled in v1"). Search currently relies strictly on regex/keyword file scanning.
+* **Current State:** Basic vector chunking and embeddings provider (`LocalEmbeddingProvider`) have been added to `backend/app/indexing/embeddings.py` and `indexer.py`, allowing vector indexing and semantic search via `GET /api/search/semantic`.
 * **Proposed Enhancement:**
-  * Implement local vector embeddings using Ollama's `POST /api/embed` endpoint, governed by `OllamaRateLimiter`.
-  * Chunk indexed text files (256–512 token chunks with overlap) and store chunk vector embeddings in SQLite (`embeddings` table).
-  * Expose vector similarity (cosine distance) search via `SemanticSearch` in `search_tools.py` and a dedicated `GET /api/search/semantic` endpoint.
-  * Fall back gracefully to keyword search if no embedding model is configured/available.
+  * Integrate automatic background indexing refresh and embeddings generation on file change detection.
+  * Enable hybrid search combining BM25/keyword scores with vector cosine similarity for enhanced retrieval precision.
+  * Expose indexing progress, token count, and vector status badges directly in the control plane UI.
 
 ### 2. Fine-Grained Action Approvals & Granular Auditing (Priority 2)
-* **Current State:** Approvals are coarse-grained (approve/deny whole action category or session-remember).
+* **Current State:** `GET /api/audit` supports basic target/action search, but lacks structured multi-field filtering and data export.
 * **Proposed Enhancement:**
   * Support line-level / diff-chunk level approval for multi-file edits.
-  * Add rich filtering and query capabilities on the SQLite audit trail (`GET /api/audit` by session, status, tool name, or date range).
-  * Enable JSON/CSV export for audit records.
+  * Add rich filtering capabilities on the SQLite audit trail (`GET /api/audit` by `action_type`, `result`, date ranges, and actor).
+  * Enable JSON and CSV export endpoints (`GET /api/audit/export`) for compliance and external auditing.
 
-### 3. Session Persistence, Export & Replay (Priority 2)
-* **Current State:** Session history stores chat messages and tool executions in SQLite, but lacks export or point-in-time replay/branching.
+### 3. Session Persistence, Export & Replay / Forking (Priority 2)
+* **Current State:** Session history stores chat messages and tool executions in SQLite, but lacks transcript export or branching.
 * **Proposed Enhancement:**
-  * Add Markdown and JSON session transcript export (`GET /api/sessions/{id}/export`).
-  * Support session branching/forking from any message or tool output checkpoint.
+  * Add Markdown and JSON session transcript export (`GET /api/sessions/{session_id}/export`).
+  * Support session branching/forking (`POST /api/sessions/{session_id}/fork`) to clone a session's state and transcript up to a given checkpoint.
 
 ### 4. Advanced Process Sandboxing & Platform Adaptability (Priority 3)
 * **Current State:** `EXEC_REQUIRE_OS_SANDBOX=true` uses Linux `unshare` namespaces. On non-Linux host platforms (macOS/Windows) or unprivileged containers, command execution fails closed.
@@ -39,9 +38,9 @@ Following an exhaustive scan of the backend Python codebase (`app/`) and Next.js
 ### 5. Frontend UI & Real-Time Monitoring Enhancements (Priority 3)
 * **Current State:** `HarnessDashboard.tsx` provides streaming chat, diff previews, and approval modals.
 * **Proposed Enhancement:**
-  * Add an interactive visual representation of workspace file tree indexing status and embedding status badges.
-  * Provide live latency and tokens-per-second metrics during stream generation.
-  * Add dark/light mode toggle persistence and accessibility keyboard navigation shortcuts.
+  * Add Export Session (Markdown/JSON) and Fork Session controls directly in the chat panel.
+  * Provide audit filtering controls and CSV/JSON export buttons in the audit view.
+  * Show live latency and tokens-per-second metrics during stream generation.
 
 ---
 
@@ -49,7 +48,7 @@ Following an exhaustive scan of the backend Python codebase (`app/`) and Next.js
 
 | Phase | Target Deliverable | Expected Benefit |
 |---|---|---|
-| **Phase 1** | Local Ollama Semantic Indexing & Vector Search | High-precision codebase context retrieval for local LLMs |
-| **Phase 2** | Audit Filtering & Session Export / Forking | Complete auditability and reproducible developer workflows |
+| **Phase 1** | Local Ollama Semantic Indexing & Hybrid Search | High-precision codebase context retrieval for local LLMs |
+| **Phase 2** | Audit Filtering/Export & Session Export/Forking | Complete auditability and reproducible developer workflows |
 | **Phase 3** | Cross-Platform Container Sandbox (Docker/bwrap) | Broadened platform support without sacrificing safety posture |
 | **Phase 4** | Enhanced UI Telemetry & Workspace File Explorer | Real-time agent execution insights and improved UX |
