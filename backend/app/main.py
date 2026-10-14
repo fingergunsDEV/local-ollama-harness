@@ -5,7 +5,9 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+import csv
+import io
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -45,6 +47,9 @@ class SemanticSearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=500)
     top_k: int = Field(default=5, ge=1, le=50)
     model: str = Field(default="nomic-embed-text")
+
+class ForkSessionRequest(BaseModel):
+    up_to_message_id: str | None = Field(default=None, max_length=200)
 
 
 class Runtime:
@@ -136,6 +141,30 @@ async def create_session(request: CreateSession) -> dict[str, Any]:
 async def get_session(session_id: str) -> dict[str, Any]:
     session = session_or_404(session_id); return {"session": session, "messages": runtime().store.messages(session_id)}
 
+@app.get("/api/sessions/{session_id}/export")
+async def export_session(session_id: str, format: str = "markdown") -> Response:
+    session_or_404(session_id)
+    try:
+        exported = runtime().store.export_session(session_id, format_type=format)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+    if format.lower() == "json":
+        return Response(content=json.dumps(exported, indent=2), media_type="application/json", headers={"Content-Disposition": f'attachment; filename="session-{session_id}.json"'})
+    else:
+        return Response(content=exported, media_type="text/markdown", headers={"Content-Disposition": f'attachment; filename="session-{session_id}.md"'})
+
+@app.post("/api/sessions/{session_id}/fork")
+async def fork_session(session_id: str, request: ForkSessionRequest | None = None) -> dict[str, Any]:
+    session_or_404(session_id)
+    up_to_msg = request.up_to_message_id if request else None
+    try:
+        new_session = runtime().store.fork_session(session_id, up_to_message_id=up_to_msg)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    runtime().audit.log(session_id=new_session["id"], actor="user", action_type="session_fork", tool_name=None, target=session_id, result="success", dry_run=new_session["dry_run"])
+    return new_session
+
 @app.post("/api/sessions/{session_id}/dry-run")
 async def update_dry_run(session_id: str, request: DryRunUpdate) -> dict[str, Any]:
     session_or_404(session_id); runtime().store.set_dry_run(session_id, request.dry_run)
@@ -174,7 +203,43 @@ async def restore_snapshot(request: SnapshotRestore) -> dict[str, Any]:
     return result
 
 @app.get("/api/audit")
-async def audit(session_id: str | None = None, query: str = "") -> dict[str, Any]: return {"entries": runtime().store.audit_entries(session_id, query)}
+async def audit(
+    session_id: str | None = None,
+    query: str = "",
+    action_type: str | None = None,
+    result: str | None = None,
+    tool_name: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: int = 500,
+    format: str = "json",
+) -> Response:
+    entries = runtime().store.audit_entries(
+        session_id=session_id,
+        query=query,
+        action_type=action_type,
+        result=result,
+        tool_name=tool_name,
+        date_from=date_from,
+        date_to=date_to,
+        limit=limit,
+    )
+
+    if format.lower() == "csv":
+        output = io.StringIO()
+        if entries:
+            fieldnames = list(entries[0].keys())
+            writer = csv.DictWriter(output, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in entries:
+                # Convert dict/list fields to JSON string for CSV output
+                csv_row = {}
+                for k, v in row.items():
+                    csv_row[k] = json.dumps(v) if isinstance(v, (dict, list)) else v
+                writer.writerow(csv_row)
+        return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="audit_log.csv"'})
+
+    return Response(content=json.dumps({"entries": entries}), media_type="application/json")
 
 @app.get("/api/files")
 async def files(path: str = ".", depth: int = 3) -> dict[str, Any]:
