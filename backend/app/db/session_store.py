@@ -133,17 +133,127 @@ class SessionStore:
             rows = conn.execute(query, values).fetchall()
         return [self._row(row) for row in rows]
 
+    def fork_session(self, parent_session_id: str, up_to_message_id: str | None = None) -> dict[str, Any]:
+        parent = self.get_session(parent_session_id)
+        if not parent:
+            raise ValueError(f"Parent session '{parent_session_id}' not found")
+
+        new_session = self.create_session(
+            model=parent["model"],
+            dry_run=parent["dry_run"],
+            workspace_root=parent["workspace_root"],
+        )
+
+        parent_messages = self.messages(parent_session_id)
+        messages_to_copy = []
+        for msg in parent_messages:
+            messages_to_copy.append(msg)
+            if up_to_message_id and msg["id"] == up_to_message_id:
+                break
+
+        with self._lock, self._connect() as conn:
+            for msg in messages_to_copy:
+                conn.execute(
+                    "INSERT INTO messages VALUES(?,?,?,?,?,?)",
+                    (str(uuid.uuid4()), new_session["id"], msg["role"], msg["content"], msg["token_count"], msg["created_at"]),
+                )
+
+        return new_session
+
+    def export_session(self, session_id: str, format_type: str = "markdown") -> str | dict[str, Any]:
+        session = self.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session '{session_id}' not found")
+
+        msgs = self.messages(session_id)
+        with self._lock, self._connect() as conn:
+            tool_rows = conn.execute("SELECT * FROM tool_calls WHERE session_id=? ORDER BY created_at", (session_id,)).fetchall()
+            tool_calls = [self._row(r) for r in tool_rows]
+
+        if format_type.lower() == "json":
+            return {
+                "session": session,
+                "messages": msgs,
+                "tool_calls": tool_calls,
+            }
+
+        # Default: Markdown
+        lines = [
+            f"# Session Export: {session['id']}",
+            f"- **Model:** {session['model']}",
+            f"- **Created At:** {session['created_at']}",
+            f"- **Dry Run:** {session['dry_run']}",
+            f"- **Workspace Root:** {session['workspace_root']}",
+            f"- **Status:** {session['status']}",
+            "",
+            "## Conversation Transcript",
+            "",
+        ]
+
+        for msg in msgs:
+            role = msg["role"].upper()
+            created = msg["created_at"]
+            lines.append(f"### {role} ({created})")
+            lines.append(msg["content"])
+            lines.append("")
+
+        if tool_calls:
+            lines.append("## Executed Tool Calls")
+            lines.append("")
+            for tc in tool_calls:
+                lines.append(f"- **{tc['tool_name']}** (status: {tc['status']}, dry_run: {tc['dry_run']})")
+                if tc.get("params_json"):
+                    lines.append(f"  - Params: `{json.dumps(tc['params_json'])}`")
+                if tc.get("result_json"):
+                    lines.append(f"  - Result: `{json.dumps(tc['result_json'])}`")
+
+        return "\n".join(lines)
+
     def add_audit(self, record: dict[str, Any]) -> None:
         self._execute("INSERT INTO audit_log VALUES(?,?,?,?,?,?,?,?,?)", (str(uuid.uuid4()), record.get("session_id"), record["actor"], record["action_type"], record.get("tool_name"), record.get("target"), record["result"], json.dumps(record, sort_keys=True), record["timestamp"]))
 
-    def audit_entries(self, session_id: str | None = None, query: str = "") -> list[dict[str, Any]]:
-        where, values = "", []
+    def audit_entries(
+        self,
+        session_id: str | None = None,
+        query: str = "",
+        action_type: str | None = None,
+        result: str | None = None,
+        tool_name: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        conditions: list[str] = []
+        values: list[Any] = []
+
         if session_id:
-            where += " WHERE session_id=?"; values.append(session_id)
+            conditions.append("session_id = ?")
+            values.append(session_id)
         if query:
-            where += (" AND " if where else " WHERE ") + "(target LIKE ? OR action_type LIKE ? OR result LIKE ?)"; values += [f"%{query}%"] * 3
+            conditions.append("(target LIKE ? OR action_type LIKE ? OR result LIKE ?)")
+            values.extend([f"%{query}%"] * 3)
+        if action_type:
+            conditions.append("action_type = ?")
+            values.append(action_type)
+        if result:
+            conditions.append("result = ?")
+            values.append(result)
+        if tool_name:
+            conditions.append("tool_name = ?")
+            values.append(tool_name)
+        if date_from:
+            conditions.append("created_at >= ?")
+            values.append(date_from)
+        if date_to:
+            conditions.append("created_at <= ?")
+            values.append(date_to)
+
+        where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
+        sql = f"SELECT * FROM audit_log{where_clause} ORDER BY created_at DESC LIMIT ?"
+        values.append(limit)
+
         with self._lock, self._connect() as conn:
-            rows = conn.execute("SELECT * FROM audit_log" + where + " ORDER BY created_at DESC LIMIT 500", values).fetchall()
+            rows = conn.execute(sql, values).fetchall()
         return [self._row(row) for row in rows]
 
     @staticmethod
