@@ -3,53 +3,61 @@
 ## Executive Overview
 The **Local Ollama Agent Harness** is a privacy-first, local-only coding agent platform that pairs a Next.js/Tailwind control plane with a FastAPI backend constrained to a workspace sandbox and loopback Ollama daemon.
 
-Following an exhaustive scan of the backend Python codebase (`app/`) and Next.js frontend (`frontend/`), this document outlines key areas of improvement across core capabilities, security/sandboxing, indexing/search, user interface, and operational resilience.
+Following an exhaustive scan of the backend Python codebase (`backend/app/`) and Next.js frontend (`frontend/`), this document outlines key areas of improvement across core capabilities, security/sandboxing, indexing/search, user interface, and operational resilience.
 
 ---
 
-## Key Improvement Areas
+## Codebase Scan Findings & Implementation Status
 
-### 1. Semantic Codebase Indexing & Hybrid Search (Priority 1)
-* **Current State:** `backend/app/indexing/embeddings.py` is an empty stub ("Semantic indexing is intentionally optional and disabled in v1"). Search currently relies strictly on regex/keyword file scanning.
-* **Proposed Enhancement:**
-  * Implement local vector embeddings using Ollama's `POST /api/embed` endpoint, governed by `OllamaRateLimiter`.
-  * Chunk indexed text files (256–512 token chunks with overlap) and store chunk vector embeddings in SQLite (`embeddings` table).
-  * Expose vector similarity (cosine distance) search via `SemanticSearch` in `search_tools.py` and a dedicated `GET /api/search/semantic` endpoint.
-  * Fall back gracefully to keyword search if no embedding model is configured/available.
-
-### 2. Fine-Grained Action Approvals & Granular Auditing (Priority 2)
-* **Current State:** Approvals are coarse-grained (approve/deny whole action category or session-remember).
-* **Proposed Enhancement:**
-  * Support line-level / diff-chunk level approval for multi-file edits.
-  * Add rich filtering and query capabilities on the SQLite audit trail (`GET /api/audit` by session, status, tool name, or date range).
-  * Enable JSON/CSV export for audit records.
-
-### 3. Session Persistence, Export & Replay (Priority 2)
-* **Current State:** Session history stores chat messages and tool executions in SQLite, but lacks export or point-in-time replay/branching.
-* **Proposed Enhancement:**
-  * Add Markdown and JSON session transcript export (`GET /api/sessions/{id}/export`).
-  * Support session branching/forking from any message or tool output checkpoint.
-
-### 4. Advanced Process Sandboxing & Platform Adaptability (Priority 3)
-* **Current State:** `EXEC_REQUIRE_OS_SANDBOX=true` uses Linux `unshare` namespaces. On non-Linux host platforms (macOS/Windows) or unprivileged containers, command execution fails closed.
-* **Proposed Enhancement:**
-  * Implement an optional Docker/Podman or bubblewrap container adapter for non-Linux or containerized developer environments.
-  * Enhance allowlist regex matching to detect obfuscated commands or chained arguments.
-
-### 5. Frontend UI & Real-Time Monitoring Enhancements (Priority 3)
-* **Current State:** `HarnessDashboard.tsx` provides streaming chat, diff previews, and approval modals.
-* **Proposed Enhancement:**
-  * Add an interactive visual representation of workspace file tree indexing status and embedding status badges.
-  * Provide live latency and tokens-per-second metrics during stream generation.
-  * Add dark/light mode toggle persistence and accessibility keyboard navigation shortcuts.
+### Current Architecture Strengths
+1. **Strict Loopback & Sandbox Controls:** Restricted workspace path canonicalization, `.env` and `.git/config` blocking, and non-loopback Ollama connection rejection.
+2. **OS Process Sandboxing:** Command execution requires Linux `unshare` namespaces (user, mount, network, PID), failing closed when unavailable.
+3. **Approval-Gated Workflows:** Dry-run modes for file mutations and commands, approval queues, and pre-change `.harness-snapshots` backups.
+4. **Local Indexing Infrastructure:** Local SQLite metadata tracking and `LocalEmbeddingProvider` / `LocalIndexer` infrastructure using Ollama `/api/embed` and `/api/embeddings`.
 
 ---
 
-## Strategic Roadmap
+## Key Improvement Areas & Next Steps
 
-| Phase | Target Deliverable | Expected Benefit |
+### 1. Semantic Codebase Indexing & Hybrid Search Integration (Priority 1)
+* **Current State:** `LocalEmbeddingProvider` and `LocalIndexer` are implemented in `backend/app/indexing/`, but `semantic_search` was not registered as a tool schema accessible to the LLM agent.
+* **Actionable Next Steps:**
+  * Register `semantic_search` in `TOOL_SCHEMAS` and handler dispatch in `ToolRegistry` (`backend/app/tools/__init__.py`).
+  * Support automatic background chunking and embedding generation for newly created or updated files.
+  * Integrate hybrid ranking (combining keyword/exact match with semantic cosine similarity scores).
+
+### 2. Session Transcript Export & Replay Support (Priority 1)
+* **Current State:** Sessions and message histories are persisted in SQLite (`backend/app/db/session_store.py`), but lacked direct export options in standard formats.
+* **Actionable Next Steps:**
+  * Add a session export endpoint (`GET /api/sessions/{session_id}/export?format=json|md`) returning full transcript, tool calls, and execution metadata in JSON or Markdown.
+  * Implement session branching/forking capabilities allowing operators to resume/branch from an earlier checkpoint message.
+
+### 3. Granular Audit Log Export & Advanced Filtering (Priority 2)
+* **Current State:** Audit logs are saved in SQLite and JSONL, but API responses only provided basic session/query filter parameters without export capabilities.
+* **Actionable Next Steps:**
+  * Expose an audit log export endpoint (`GET /api/audit/export?format=json|csv`) allowing export of compliance and execution records.
+  * Add date-range, tool-name, and actor filters to the `/api/audit` endpoint.
+
+### 4. Cross-Platform Container Sandboxing (Priority 3)
+* **Current State:** `EXEC_REQUIRE_OS_SANDBOX=true` uses Linux `unshare` namespaces. Execution fails closed on macOS/Windows host environments.
+* **Actionable Next Steps:**
+  * Add an optional Docker/Podman container adapter fallback for non-Linux or containerized local dev environments.
+  * Improve command allowlist pattern matching for nested or multi-argument execution.
+
+### 5. Frontend Visual Telemetry & Workspace Explorer Enhancements (Priority 3)
+* **Current State:** Next.js dashboard provides streaming SSE response view, diff previews, and approval dialogs.
+* **Actionable Next Steps:**
+  * Display live vector embedding status badges and file indexing stats in the Workspace Files view.
+  * Show streaming generation telemetry (tokens/sec, latency, wall-clock duration) in the chat panel.
+  * Add keyboard navigation shortcuts and dark/light theme persistence.
+
+---
+
+## Strategic Implementation Roadmap
+
+| Phase | Target Feature | Deliverables |
 |---|---|---|
-| **Phase 1** | Local Ollama Semantic Indexing & Vector Search | High-precision codebase context retrieval for local LLMs |
-| **Phase 2** | Audit Filtering & Session Export / Forking | Complete auditability and reproducible developer workflows |
-| **Phase 3** | Cross-Platform Container Sandbox (Docker/bwrap) | Broadened platform support without sacrificing safety posture |
-| **Phase 4** | Enhanced UI Telemetry & Workspace File Explorer | Real-time agent execution insights and improved UX |
+| **Phase 1** | Agent Semantic Search & Transcript Export | Register `semantic_search` tool; implement `GET /api/sessions/{id}/export` (JSON/MD) & `GET /api/audit/export` (JSON/CSV) |
+| **Phase 2** | Session Forking & Advanced Audit Filtering | Add session branching from message ID; date-range & tool filters on audit API |
+| **Phase 3** | Docker/Podman Container Adapter | Cross-platform sandbox support for macOS/Windows |
+| **Phase 4** | UI Telemetry & Indexing Badges | Live tokens/sec display, indexing status indicators, keyboard shortcuts |

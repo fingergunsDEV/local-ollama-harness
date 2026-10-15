@@ -3,9 +3,12 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
+import csv
+import io
+import json
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -136,6 +139,14 @@ async def create_session(request: CreateSession) -> dict[str, Any]:
 async def get_session(session_id: str) -> dict[str, Any]:
     session = session_or_404(session_id); return {"session": session, "messages": runtime().store.messages(session_id)}
 
+@app.get("/api/sessions/{session_id}/export")
+async def export_session(session_id: str, format: str = "json") -> Any:
+    session_or_404(session_id)
+    exported = runtime().store.export_session(session_id, export_format=format)
+    if isinstance(exported, str):
+        return Response(content=exported, media_type="text/markdown")
+    return exported
+
 @app.post("/api/sessions/{session_id}/dry-run")
 async def update_dry_run(session_id: str, request: DryRunUpdate) -> dict[str, Any]:
     session_or_404(session_id); runtime().store.set_dry_run(session_id, request.dry_run)
@@ -175,6 +186,30 @@ async def restore_snapshot(request: SnapshotRestore) -> dict[str, Any]:
 
 @app.get("/api/audit")
 async def audit(session_id: str | None = None, query: str = "") -> dict[str, Any]: return {"entries": runtime().store.audit_entries(session_id, query)}
+
+@app.get("/api/audit/export")
+async def export_audit(session_id: str | None = None, query: str = "", format: str = "json") -> Any:
+    entries = runtime().store.audit_entries(session_id, query)
+    if format.lower() == "csv":
+        output = io.StringIO()
+        fieldnames = ["id", "session_id", "actor", "action_type", "tool_name", "target", "result", "created_at", "payload_json"]
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+        for entry in entries:
+            row = {
+                "id": entry.get("id", ""),
+                "session_id": entry.get("session_id", ""),
+                "actor": entry.get("actor", ""),
+                "action_type": entry.get("action_type", ""),
+                "tool_name": entry.get("tool_name", ""),
+                "target": entry.get("target", ""),
+                "result": entry.get("result", ""),
+                "created_at": entry.get("created_at", ""),
+                "payload_json": json.dumps(entry.get("payload_json", {})),
+            }
+            writer.writerow(row)
+        return Response(content=output.getvalue(), media_type="text/csv")
+    return {"entries": entries}
 
 @app.get("/api/files")
 async def files(path: str = ".", depth: int = 3) -> dict[str, Any]:
