@@ -106,6 +106,51 @@ class SessionStore:
             rows = conn.execute("SELECT * FROM messages WHERE session_id=? ORDER BY created_at", (session_id,)).fetchall()
         return [self._row(row) for row in rows]
 
+    def export_session(self, session_id: str, export_format: str = "json") -> dict[str, Any] | str:
+        session = self.get_session(session_id)
+        if not session:
+            return None
+        messages = self.messages(session_id)
+        with self._lock, self._connect() as conn:
+            tool_rows = conn.execute("SELECT * FROM tool_calls WHERE session_id=? ORDER BY created_at", (session_id,)).fetchall()
+            tool_calls = [self._row(r) for r in tool_rows]
+
+        if export_format.lower() == "md" or export_format.lower() == "markdown":
+            lines = [
+                f"# Session Export: {session_id}",
+                f"- **Model**: {session['model']}",
+                f"- **Created At**: {session['created_at']}",
+                f"- **Dry Run**: {session['dry_run']}",
+                f"- **Workspace Root**: {session['workspace_root']}",
+                "",
+                "## Transcript",
+                "",
+            ]
+            for msg in messages:
+                role = msg['role'].upper()
+                content = msg['content']
+                lines.append(f"### {role} ({msg['created_at']})")
+                lines.append(content)
+                lines.append("")
+
+            if tool_calls:
+                lines.append("## Tool Calls")
+                lines.append("")
+                for tc in tool_calls:
+                    lines.append(f"- **Tool**: {tc['tool_name']} | **Status**: {tc['status']} | **Time**: {tc['created_at']}")
+                    lines.append(f"  - **Params**: `{json.dumps(tc['params_json'])}`")
+                    if tc.get('result_json'):
+                        lines.append(f"  - **Result**: `{json.dumps(tc['result_json'])}`")
+                    lines.append("")
+            return "\n".join(lines)
+
+        return {
+            "session": session,
+            "messages": messages,
+            "tool_calls": tool_calls,
+            "exported_at": now(),
+        }
+
     def start_tool_call(self, session_id: str, message_id: str | None, name: str, params: dict[str, Any], dry_run: bool) -> str:
         tool_call_id = str(uuid.uuid4())
         self._execute("INSERT INTO tool_calls VALUES(?,?,?,?,?,?,?,?,?)", (tool_call_id, session_id, message_id, name, json.dumps(params, sort_keys=True), None, "started", int(dry_run), now()))
