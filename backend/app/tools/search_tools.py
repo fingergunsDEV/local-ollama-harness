@@ -6,6 +6,7 @@ from typing import Any
 from app.config import Settings
 from app.indexing.embeddings import LocalEmbeddingProvider
 from app.indexing.indexer import LocalIndexer
+from app.safety.rate_limiter import OllamaRateLimiter
 from app.safety.sandbox import WorkspaceSandbox
 
 
@@ -31,12 +32,17 @@ class SearchTools:
             except (PermissionError, OSError): continue
         return {"query": query, "results": results, "truncated": len(results) >= min(max_results, 500)}
 
-    async def semantic_search(self, query: str, provider: LocalEmbeddingProvider, top_k: int = 5) -> dict[str, Any]:
+    async def semantic_search(self, query: str, provider: LocalEmbeddingProvider | None = None, top_k: int = 5) -> dict[str, Any]:
         """Perform semantic code search using local embeddings."""
         if not query or len(query) > 500:
             raise ValueError("query must be 1-500 characters")
         if not self.indexer:
             return {"query": query, "results": [], "error": "Indexer not initialized"}
+
+        created_provider = False
+        if provider is None:
+            provider = LocalEmbeddingProvider(self.settings, OllamaRateLimiter(self.settings))
+            created_provider = True
 
         try:
             query_vectors = await provider.embed(query)
@@ -46,3 +52,6 @@ class SearchTools:
             return {"query": query, "results": results}
         except Exception as exc:
             return {"query": query, "results": [], "error": str(exc)}
+        finally:
+            if created_provider and provider is not None:
+                await provider.close()

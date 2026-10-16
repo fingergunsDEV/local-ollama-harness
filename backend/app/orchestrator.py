@@ -110,6 +110,7 @@ class AgentOrchestrator:
             # meaningful and guarantees no mutation occurs before the gate evaluates it.
             if action_type:
                 preview = self.tools.execute(name, args, dry_run=True)
+                if asyncio.iscoroutine(preview): preview = await preview
                 plan = str(preview.get("diff") or preview.get("plan") or json.dumps(preview))
                 if session["dry_run"]:
                     result = preview
@@ -123,14 +124,20 @@ class AgentOrchestrator:
                         approved_by = "user"
                     else:
                         snapshot = self._snapshot_if_file(session["id"], name, args)
-                        result = self.tools.execute(name, args, dry_run=False); approved_by = "user"
+                        result = self.tools.execute(name, args, dry_run=False)
+                        if asyncio.iscoroutine(result): result = await result
+                        approved_by = "user"
                         if snapshot: result["snapshot"] = snapshot
                 else:
                     snapshot = self._snapshot_if_file(session["id"], name, args)
-                    result = self.tools.execute(name, args, dry_run=False); approved_by = "auto"
+                    result = self.tools.execute(name, args, dry_run=False)
+                    if asyncio.iscoroutine(result): result = await result
+                    approved_by = "auto"
                     if snapshot: result["snapshot"] = snapshot
             else:
-                result = self.tools.execute(name, args, dry_run=False); approved_by = "n/a"
+                result = self.tools.execute(name, args, dry_run=False)
+                if asyncio.iscoroutine(result): result = await result
+                approved_by = "n/a"
             status = "denied" if result.get("denied") else "success"
             self.store.finish_tool_call(call_id, result, status)
             target = str(args.get("path") or args.get("argv") or "")
