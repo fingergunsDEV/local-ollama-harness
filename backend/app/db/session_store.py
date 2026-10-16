@@ -136,12 +136,45 @@ class SessionStore:
     def add_audit(self, record: dict[str, Any]) -> None:
         self._execute("INSERT INTO audit_log VALUES(?,?,?,?,?,?,?,?,?)", (str(uuid.uuid4()), record.get("session_id"), record["actor"], record["action_type"], record.get("tool_name"), record.get("target"), record["result"], json.dumps(record, sort_keys=True), record["timestamp"]))
 
-    def audit_entries(self, session_id: str | None = None, query: str = "") -> list[dict[str, Any]]:
-        where, values = "", []
+    def audit_entries(
+        self,
+        session_id: str | None = None,
+        query: str = "",
+        actor: str | None = None,
+        action_type: str | None = None,
+        tool_name: str | None = None,
+        result: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        values: list[Any] = []
         if session_id:
-            where += " WHERE session_id=?"; values.append(session_id)
+            clauses.append("session_id = ?")
+            values.append(session_id)
+        if actor:
+            clauses.append("actor = ?")
+            values.append(actor)
+        if action_type:
+            clauses.append("action_type = ?")
+            values.append(action_type)
+        if tool_name:
+            clauses.append("tool_name = ?")
+            values.append(tool_name)
+        if result:
+            clauses.append("result = ?")
+            values.append(result)
+        if start_date:
+            clauses.append("created_at >= ?")
+            values.append(start_date)
+        if end_date:
+            clauses.append("created_at <= ?")
+            values.append(end_date)
         if query:
-            where += (" AND " if where else " WHERE ") + "(target LIKE ? OR action_type LIKE ? OR result LIKE ?)"; values += [f"%{query}%"] * 3
+            clauses.append("(target LIKE ? OR action_type LIKE ? OR result LIKE ? OR actor LIKE ?)")
+            values.extend([f"%{query}%"] * 4)
+
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         with self._lock, self._connect() as conn:
             rows = conn.execute("SELECT * FROM audit_log" + where + " ORDER BY created_at DESC LIMIT 500", values).fetchall()
         return [self._row(row) for row in rows]

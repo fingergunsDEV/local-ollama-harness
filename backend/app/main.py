@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import csv
+import io
+import json
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -19,6 +22,7 @@ from app.ollama_client import OllamaClient, OllamaUnavailable
 from app.orchestrator import AgentOrchestrator
 from app.safety.approval import ApprovalManager
 from app.safety.rate_limiter import OllamaRateLimiter
+from app.safety.sandbox import WorkspaceSandbox
 from app.tools import ToolRegistry
 from app.streaming import sse_events
 
@@ -50,7 +54,9 @@ class SemanticSearchRequest(BaseModel):
 class Runtime:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings; self.store = SessionStore(settings.sqlite_path)
-        self.limiter = OllamaRateLimiter(settings); self.tools = ToolRegistry(settings)
+        self.limiter = OllamaRateLimiter(settings); self.sandbox = WorkspaceSandbox(settings)
+        self.indexer = LocalIndexer(settings, self.sandbox, self.store)
+        self.tools = ToolRegistry(settings, indexer=self.indexer)
         self.approvals = ApprovalManager(self.store); self.audit = AuditLogger(self.store, settings.audit_log_path)
         self.ollama = OllamaClient(settings, self.limiter)
         self.orchestrator = AgentOrchestrator(settings, self.store, self.ollama, self.tools, self.approvals, self.audit)
@@ -136,6 +142,46 @@ async def create_session(request: CreateSession) -> dict[str, Any]:
 async def get_session(session_id: str) -> dict[str, Any]:
     session = session_or_404(session_id); return {"session": session, "messages": runtime().store.messages(session_id)}
 
+@app.get("/api/sessions/{session_id}/export")
+async def export_session(session_id: str, format: str = "json") -> Response:
+    session = session_or_404(session_id)
+    messages = runtime().store.messages(session_id)
+    if format.lower() in ("markdown", "md"):
+        lines = [
+            f"# Session Transcript: {session['id']}\n",
+            f"- **Model:** {session['model']}",
+            f"- **Status:** {session['status']}",
+            f"- **Dry Run:** {session['dry_run']}",
+            f"- **Created At:** {session['created_at']}",
+            f"- **Workspace Root:** {session['workspace_root']}\n",
+            "## Messages\n",
+        ]
+        for msg in messages:
+            role = msg["role"].capitalize()
+            content = msg.get("content", "")
+            lines.append(f"### {role}")
+            if msg["role"] == "tool":
+                lines.append(f"```json\n{content}\n```\n")
+            else:
+                lines.append(f"{content}\n")
+        md_text = "\n".join(lines)
+        return Response(
+            content=md_text,
+            media_type="text/markdown",
+            headers={"Content-Disposition": f"attachment; filename=session_{session_id}.md"},
+        )
+    else:
+        export_data = {
+            "session": session,
+            "messages": messages,
+        }
+        json_text = json.dumps(export_data, indent=2)
+        return Response(
+            content=json_text,
+            media_type="application/json",
+            headers={"Content-Disposition": f"attachment; filename=session_{session_id}.json"},
+        )
+
 @app.post("/api/sessions/{session_id}/dry-run")
 async def update_dry_run(session_id: str, request: DryRunUpdate) -> dict[str, Any]:
     session_or_404(session_id); runtime().store.set_dry_run(session_id, request.dry_run)
@@ -174,7 +220,57 @@ async def restore_snapshot(request: SnapshotRestore) -> dict[str, Any]:
     return result
 
 @app.get("/api/audit")
-async def audit(session_id: str | None = None, query: str = "") -> dict[str, Any]: return {"entries": runtime().store.audit_entries(session_id, query)}
+async def audit(
+    session_id: str | None = None,
+    query: str = "",
+    actor: str | None = None,
+    action_type: str | None = None,
+    tool_name: str | None = None,
+    result: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict[str, Any]:
+    return {"entries": runtime().store.audit_entries(
+        session_id=session_id, query=query, actor=actor, action_type=action_type,
+        tool_name=tool_name, result=result, start_date=start_date, end_date=end_date
+    )}
+
+@app.get("/api/audit/export")
+async def export_audit(
+    format: str = "json",
+    session_id: str | None = None,
+    query: str = "",
+    actor: str | None = None,
+    action_type: str | None = None,
+    tool_name: str | None = None,
+    result: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> Response:
+    entries = runtime().store.audit_entries(
+        session_id=session_id, query=query, actor=actor, action_type=action_type,
+        tool_name=tool_name, result=result, start_date=start_date, end_date=end_date
+    )
+    if format.lower() == "csv":
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["id", "created_at", "session_id", "actor", "action_type", "tool_name", "target", "result", "payload"])
+        for e in entries:
+            writer.writerow([
+                e.get("id", ""),
+                e.get("created_at", ""),
+                e.get("session_id", ""),
+                e.get("actor", ""),
+                e.get("action_type", ""),
+                e.get("tool_name", ""),
+                e.get("target", ""),
+                e.get("result", ""),
+                json.dumps(e.get("payload_json", {})),
+            ])
+        return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=audit_export.csv"})
+    else:
+        content = json.dumps({"entries": entries}, indent=2)
+        return Response(content=content, media_type="application/json", headers={"Content-Disposition": "attachment; filename=audit_export.json"})
 
 @app.get("/api/files")
 async def files(path: str = ".", depth: int = 3) -> dict[str, Any]:
