@@ -47,9 +47,29 @@ Following an exhaustive scan of the backend Python codebase (`app/`) and Next.js
 
 ## Strategic Roadmap
 
-| Phase | Target Deliverable | Expected Benefit |
-|---|---|---|
-| **Phase 1** | Local Ollama Semantic Indexing & Vector Search | High-precision codebase context retrieval for local LLMs |
-| **Phase 2** | Audit Filtering & Session Export / Forking | Complete auditability and reproducible developer workflows |
-| **Phase 3** | Cross-Platform Container Sandbox (Docker/bwrap) | Broadened platform support without sacrificing safety posture |
-| **Phase 4** | Enhanced UI Telemetry & Workspace File Explorer | Real-time agent execution insights and improved UX |
+| Phase | Target Deliverable | Expected Benefit | Status |
+|---|---|---|---|
+| **Phase 1** | Local Ollama Semantic Indexing & Vector Search | High-precision codebase context retrieval for local LLMs | Completed |
+| **Phase 2** | Audit Filtering & Session Export / Forking | Complete auditability and reproducible developer workflows | In Progress |
+| **Phase 3** | Cross-Platform Container Sandbox (Docker/bwrap) | Broadened platform support without sacrificing safety posture | Planned |
+| **Phase 4** | Enhanced UI Telemetry & Workspace File Explorer | Real-time agent execution insights and improved UX | Planned |
+
+---
+
+## Detailed Implementation Notes (Phase 1 & Phase 2)
+
+### Session Export (`GET /api/sessions/{session_id}/export`)
+* **Formats Supported:** `markdown` (human-readable transcript with role headers and tool calls) and `json` (structured JSON dump of session metadata and message array).
+* **Endpoints:** `GET /api/sessions/{session_id}/export?format=markdown|json`
+
+### Audit Trail Filtering & CSV Export (`GET /api/audit`)
+* **Filtering Parameters:**
+  * `session_id`: Filter logs by specific session ID.
+  * `actor`: Filter by actor (`user` or `agent`).
+  * `action_type`: Filter by specific action (e.g., `tool_call`, `dry_run_toggle`, `approval_resolve`).
+  * `result`: Filter by outcome (`success`, `denied`, `error`, `failed`).
+  * `date_from` / `date_to`: ISO timestamp range limits.
+* **Export Formats:** `format=json` (default JSON payload) or `format=csv` (Response with `text/csv` content type and header disposition).
+
+### Semantic Indexing & Embedding Tests
+* Full unit test coverage added in `backend/tests/test_indexing.py` testing `chunk_text`, `cosine_similarity`, `LocalEmbeddingProvider` fallback to `/api/embeddings`, `LocalIndexer.generate_embeddings_for_file`, and `SearchTools.semantic_search`.

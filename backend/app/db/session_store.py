@@ -136,14 +136,44 @@ class SessionStore:
     def add_audit(self, record: dict[str, Any]) -> None:
         self._execute("INSERT INTO audit_log VALUES(?,?,?,?,?,?,?,?,?)", (str(uuid.uuid4()), record.get("session_id"), record["actor"], record["action_type"], record.get("tool_name"), record.get("target"), record["result"], json.dumps(record, sort_keys=True), record["timestamp"]))
 
-    def audit_entries(self, session_id: str | None = None, query: str = "") -> list[dict[str, Any]]:
-        where, values = "", []
+    def audit_entries(
+        self,
+        session_id: str | None = None,
+        query: str = "",
+        actor: str | None = None,
+        action_type: str | None = None,
+        result: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> list[dict[str, Any]]:
+        conditions: list[str] = []
+        values: list[Any] = []
+
         if session_id:
-            where += " WHERE session_id=?"; values.append(session_id)
+            conditions.append("session_id = ?")
+            values.append(session_id)
+        if actor:
+            conditions.append("actor = ?")
+            values.append(actor)
+        if action_type:
+            conditions.append("action_type = ?")
+            values.append(action_type)
+        if result:
+            conditions.append("result = ?")
+            values.append(result)
+        if date_from:
+            conditions.append("created_at >= ?")
+            values.append(date_from)
+        if date_to:
+            conditions.append("created_at <= ?")
+            values.append(date_to)
         if query:
-            where += (" AND " if where else " WHERE ") + "(target LIKE ? OR action_type LIKE ? OR result LIKE ?)"; values += [f"%{query}%"] * 3
+            conditions.append("(target LIKE ? OR action_type LIKE ? OR result LIKE ?)")
+            values.extend([f"%{query}%"] * 3)
+
+        where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
         with self._lock, self._connect() as conn:
-            rows = conn.execute("SELECT * FROM audit_log" + where + " ORDER BY created_at DESC LIMIT 500", values).fetchall()
+            rows = conn.execute("SELECT * FROM audit_log" + where_clause + " ORDER BY created_at DESC LIMIT 500", values).fetchall()
         return [self._row(row) for row in rows]
 
     @staticmethod
