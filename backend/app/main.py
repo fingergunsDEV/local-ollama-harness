@@ -136,6 +136,39 @@ async def create_session(request: CreateSession) -> dict[str, Any]:
 async def get_session(session_id: str) -> dict[str, Any]:
     session = session_or_404(session_id); return {"session": session, "messages": runtime().store.messages(session_id)}
 
+@app.get("/api/sessions/{session_id}/export")
+async def export_session(session_id: str, format: str = "markdown") -> Any:
+    session = session_or_404(session_id)
+    messages = runtime().store.messages(session_id)
+    if format.lower() == "json":
+        return {"session": session, "messages": messages}
+    elif format.lower() == "markdown":
+        md_lines = [
+            f"# Session Export: {session['id']}",
+            f"- **Created At**: {session['created_at']}",
+            f"- **Model**: {session['model']}",
+            f"- **Workspace Root**: {session['workspace_root']}",
+            f"- **Status**: {session['status']}",
+            "",
+            "## Transcript",
+            "",
+        ]
+        for msg in messages:
+            role = msg["role"].capitalize()
+            content = msg["content"]
+            created = msg["created_at"]
+            md_lines.append(f"### {role} ({created})")
+            md_lines.append(content)
+            md_lines.append("")
+        content_str = "\n".join(md_lines)
+        return StreamingResponse(
+            content=iter([content_str]),
+            media_type="text/markdown",
+            headers={"Content-Disposition": f"attachment; filename=session-{session_id}.md"},
+        )
+    else:
+        raise HTTPException(400, "Unsupported export format. Choose 'markdown' or 'json'.")
+
 @app.post("/api/sessions/{session_id}/dry-run")
 async def update_dry_run(session_id: str, request: DryRunUpdate) -> dict[str, Any]:
     session_or_404(session_id); runtime().store.set_dry_run(session_id, request.dry_run)
@@ -174,7 +207,49 @@ async def restore_snapshot(request: SnapshotRestore) -> dict[str, Any]:
     return result
 
 @app.get("/api/audit")
-async def audit(session_id: str | None = None, query: str = "") -> dict[str, Any]: return {"entries": runtime().store.audit_entries(session_id, query)}
+async def audit(
+    session_id: str | None = None,
+    query: str = "",
+    actor: str | None = None,
+    action_type: str | None = None,
+    result: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    format: str = "json",
+) -> Any:
+    entries = runtime().store.audit_entries(
+        session_id=session_id,
+        query=query,
+        actor=actor,
+        action_type=action_type,
+        result=result,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    if format.lower() == "csv":
+        import csv
+        import io
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["id", "session_id", "actor", "action_type", "tool_name", "target", "result", "created_at"])
+        for entry in entries:
+            writer.writerow([
+                entry.get("id"),
+                entry.get("session_id"),
+                entry.get("actor"),
+                entry.get("action_type"),
+                entry.get("tool_name"),
+                entry.get("target"),
+                entry.get("result"),
+                entry.get("created_at"),
+            ])
+        return StreamingResponse(
+            content=iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=audit_log.csv"},
+        )
+    return {"entries": entries}
 
 @app.get("/api/files")
 async def files(path: str = ".", depth: int = 3) -> dict[str, Any]:
