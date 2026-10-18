@@ -7,28 +7,27 @@ Following an exhaustive scan of the backend Python codebase (`app/`) and Next.js
 
 ---
 
-## Key Improvement Areas
+## Key Improvement Areas & Implementation Status
 
-### 1. Semantic Codebase Indexing & Hybrid Search (Priority 1)
-* **Current State:** `backend/app/indexing/embeddings.py` is an empty stub ("Semantic indexing is intentionally optional and disabled in v1"). Search currently relies strictly on regex/keyword file scanning.
-* **Proposed Enhancement:**
-  * Implement local vector embeddings using Ollama's `POST /api/embed` endpoint, governed by `OllamaRateLimiter`.
-  * Chunk indexed text files (256–512 token chunks with overlap) and store chunk vector embeddings in SQLite (`embeddings` table).
-  * Expose vector similarity (cosine distance) search via `SemanticSearch` in `search_tools.py` and a dedicated `GET /api/search/semantic` endpoint.
-  * Fall back gracefully to keyword search if no embedding model is configured/available.
+### 1. Semantic Codebase Indexing & Hybrid Search (Priority 1) — **[IMPLEMENTED]**
+* **Status:** Implemented local vector embeddings using Ollama's `POST /api/embed` / `/api/embeddings` endpoint, governed by `OllamaRateLimiter`.
+* **Key Features:**
+  * Text chunking (500 char chunks with 50 char overlap) and SQLite vector storage (`file_embeddings` table).
+  * Cosine similarity vector search via `SearchTools.semantic_search` and `POST /api/search/semantic`.
+  * Manual & automated file embedding generation endpoint (`POST /api/index/embed-file`).
 
-### 2. Fine-Grained Action Approvals & Granular Auditing (Priority 2)
-* **Current State:** Approvals are coarse-grained (approve/deny whole action category or session-remember).
-* **Proposed Enhancement:**
-  * Support line-level / diff-chunk level approval for multi-file edits.
-  * Add rich filtering and query capabilities on the SQLite audit trail (`GET /api/audit` by session, status, tool name, or date range).
-  * Enable JSON/CSV export for audit records.
+### 2. Fine-Grained Action Approvals & Granular Auditing (Priority 2) — **[IN PROGRESS]**
+* **Status:** Enhanced audit querying and export capabilities.
+* **Key Features:**
+  * Rich filtering on SQLite audit trail (`GET /api/audit` by session, action_type, actor, result, or query).
+  * JSON and CSV download export formats (`GET /api/audit/export`).
+  * Future: Line-level / diff-chunk level approval UI for multi-file edits.
 
-### 3. Session Persistence, Export & Replay (Priority 2)
-* **Current State:** Session history stores chat messages and tool executions in SQLite, but lacks export or point-in-time replay/branching.
-* **Proposed Enhancement:**
-  * Add Markdown and JSON session transcript export (`GET /api/sessions/{id}/export`).
-  * Support session branching/forking from any message or tool output checkpoint.
+### 3. Session Persistence, Export & Forking / Replay (Priority 2) — **[IN PROGRESS]**
+* **Status:** Session export and checkpoint branching implemented.
+* **Key Features:**
+  * Markdown (`?format=markdown`) and JSON (`?format=json`) session transcript export (`GET /api/sessions/{id}/export`).
+  * Session branching/forking from any message checkpoint (`POST /api/sessions/{id}/fork`).
 
 ### 4. Advanced Process Sandboxing & Platform Adaptability (Priority 3)
 * **Current State:** `EXEC_REQUIRE_OS_SANDBOX=true` uses Linux `unshare` namespaces. On non-Linux host platforms (macOS/Windows) or unprivileged containers, command execution fails closed.
@@ -39,7 +38,7 @@ Following an exhaustive scan of the backend Python codebase (`app/`) and Next.js
 ### 5. Frontend UI & Real-Time Monitoring Enhancements (Priority 3)
 * **Current State:** `HarnessDashboard.tsx` provides streaming chat, diff previews, and approval modals.
 * **Proposed Enhancement:**
-  * Add an interactive visual representation of workspace file tree indexing status and embedding status badges.
+  * Add interactive export buttons for sessions and audit logs in the control plane.
   * Provide live latency and tokens-per-second metrics during stream generation.
   * Add dark/light mode toggle persistence and accessibility keyboard navigation shortcuts.
 
@@ -47,9 +46,9 @@ Following an exhaustive scan of the backend Python codebase (`app/`) and Next.js
 
 ## Strategic Roadmap
 
-| Phase | Target Deliverable | Expected Benefit |
+| Phase | Target Deliverable | Status |
 |---|---|---|
-| **Phase 1** | Local Ollama Semantic Indexing & Vector Search | High-precision codebase context retrieval for local LLMs |
-| **Phase 2** | Audit Filtering & Session Export / Forking | Complete auditability and reproducible developer workflows |
-| **Phase 3** | Cross-Platform Container Sandbox (Docker/bwrap) | Broadened platform support without sacrificing safety posture |
-| **Phase 4** | Enhanced UI Telemetry & Workspace File Explorer | Real-time agent execution insights and improved UX |
+| **Phase 1** | Local Ollama Semantic Indexing & Vector Search | Implemented |
+| **Phase 2** | Audit Filtering & Session Export / Forking | Implemented |
+| **Phase 3** | Cross-Platform Container Sandbox (Docker/bwrap) | Next Priority |
+| **Phase 4** | Enhanced UI Telemetry & Workspace File Explorer | Next Priority |
