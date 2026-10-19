@@ -22,13 +22,51 @@ export default function HarnessDashboard() {
   const [liveText, setLiveText] = useState(""); const [running, setRunning] = useState(false); const [error, setError] = useState(""); const [rate, setRate] = useState<any>(null);
   const [approvals, setApprovals] = useState<Approval[]>([]); const [files, setFiles] = useState<FileEntry[]>([]); const [preview, setPreview] = useState<any>(null); const [audit, setAudit] = useState<Audit[]>([]); const [activeTab, setActiveTab] = useState("chat");
 
+  // Audit Filters
+  const [auditQuery, setAuditQuery] = useState("");
+  const [auditActor, setAuditActor] = useState("");
+  const [auditResult, setAuditResult] = useState("");
+
+  // Semantic Search
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searching, setSearching] = useState(false);
+
+  const refreshAudit = useCallback(async () => {
+    try {
+      const params = new URLSearchParams();
+      if (auditQuery) params.append("query", auditQuery);
+      if (auditActor) params.append("actor", auditActor);
+      if (auditResult) params.append("result", auditResult);
+      const data = await getJson<any>(`/api/audit?${params.toString()}`);
+      setAudit(data.entries || []);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to fetch audit logs");
+    }
+  }, [auditQuery, auditActor, auditResult]);
+
   const refresh = useCallback(async () => {
     try {
-      const [s, modelsData, sessionsData, rateData, approvalsData, filesData, auditData] = await Promise.all([getJson<any>("/api/settings"), getJson<any>("/api/models"), getJson<any>("/api/sessions"), getJson<any>("/api/rate-status"), getJson<any>("/api/approvals"), getJson<any>("/api/files?path=.&depth=3"), getJson<any>("/api/audit")]);
+      const [s, modelsData, sessionsData, rateData, approvalsData, filesData, auditData] = await Promise.all([
+        getJson<any>("/api/settings"),
+        getJson<any>("/api/models"),
+        getJson<any>("/api/sessions"),
+        getJson<any>("/api/rate-status"),
+        getJson<any>("/api/approvals"),
+        getJson<any>("/api/files?path=.&depth=3"),
+        getJson<any>("/api/audit")
+      ]);
       setSettings(s); setModels(modelsData.models || []); setModel((current) => current || modelsData.models?.[0]?.name || ""); setSessions(sessionsData.sessions || []); setRate(rateData); setApprovals(approvalsData.approvals || []); setFiles(filesData.entries || []); setAudit(auditData.entries || []); setError("");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to reach the local backend"); }
   }, []);
+
   useEffect(() => { void refresh(); const id = window.setInterval(() => { void getJson<any>("/api/rate-status").then(setRate).catch(() => undefined); void getJson<any>("/api/approvals").then(x => setApprovals(x.approvals || [])).catch(() => undefined); }, 2500); return () => window.clearInterval(id); }, [refresh]);
+
+  useEffect(() => {
+    if (activeTab === "audit") {
+      void refreshAudit();
+    }
+  }, [activeTab, refreshAudit]);
 
   const loadSession = async (candidate: Session) => { try { const data = await getJson<any>(`/api/sessions/${candidate.id}`); setSession(data.session); setTranscript((data.messages || []).map((m: any) => { if (m.role !== "tool") return { id: m.id, role: m.role, content: m.content }; try { return { id: m.id, role: "tool", name: "persisted tool result", result: JSON.parse(m.content) }; } catch { return { id: m.id, role: "tool", name: "persisted tool result", result: { content: m.content } }; } })); setActiveTab("chat"); } catch (cause) { setError(String(cause)); } };
   const ensureSession = async (): Promise<Session> => { if (session) return session; if (!model) throw new Error("Select an installed Ollama model first"); const created = await postJson<Session>("/api/sessions", { model }); setSessions(items => [created, ...items]); setSession(created); return created; };
@@ -36,6 +74,44 @@ export default function HarnessDashboard() {
   const resolve = async (item: Approval, approved: boolean, remember: boolean) => { await postJson(`/api/approvals/${item.id}/resolve`, { approved, remember_for_session: remember }); await refresh(); };
   const stop = async () => { if (session) await postJson(`/api/sessions/${session.id}/kill`); };
   const restore = async (snapshot: string, path: string) => { try { await postJson("/api/snapshots/restore", { snapshot_id: snapshot, path }); setError(""); await refresh(); } catch (cause) { setError(cause instanceof Error ? cause.message : "Snapshot restore failed"); } };
+
+  const exportSession = (format: "json" | "markdown") => {
+    if (!session) return;
+    window.open(`${API}/api/sessions/${session.id}/export?format=${format}`, "_blank");
+  };
+
+  const forkSession = async () => {
+    if (!session) return;
+    try {
+      const forked = await postJson<Session>(`/api/sessions/${session.id}/fork`);
+      setSessions(items => [forked, ...items]);
+      await loadSession(forked);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Fork session failed");
+    }
+  };
+
+  const runSemanticSearch = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!searchQuery.trim()) return;
+    setSearching(true);
+    try {
+      const res = await postJson<any>("/api/search/semantic", { query: searchQuery.trim(), top_k: 10 });
+      setSearchResults(res.results || []);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Semantic search failed");
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const exportAuditCsv = () => {
+    const params = new URLSearchParams({ format: "csv" });
+    if (auditQuery) params.append("query", auditQuery);
+    if (auditActor) params.append("actor", auditActor);
+    if (auditResult) params.append("result", auditResult);
+    window.open(`${API}/api/audit?${params.toString()}`, "_blank");
+  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault(); const message = prompt.trim(); if (!message || running) return;
@@ -50,15 +126,17 @@ export default function HarnessDashboard() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Run failed"); } finally { setRunning(false); }
   };
 
-  const visibleAudit = useMemo(() => audit.slice(0, 80), [audit]);
+  const visibleAudit = useMemo(() => audit.slice(0, 100), [audit]);
+
   return <main className="shell">
-    <aside className="sidebar"><div className="brand"><span className="brand-mark">◉</span><div><b>LOCAL HARNESS</b><small>Ollama · workspace-bound</small></div></div><nav>{[["chat","Chat"],["files","Files"],["approvals",`Approvals ${approvals.length ? `(${approvals.length})` : ""}`],["audit","Audit"],["settings","Settings"]].map(([key,label]) => <button key={key} className={activeTab === key ? "nav-active" : ""} onClick={() => setActiveTab(key)}>{label}</button>)}</nav><section className="sidebar-foot"><p>Outbound inference is restricted to the configured loopback Ollama daemon.</p><RateLimitBadge status={rate}/></section></aside>
+    <aside className="sidebar"><div className="brand"><span className="brand-mark">◉</span><div><b>LOCAL HARNESS</b><small>Ollama · workspace-bound</small></div></div><nav>{[["chat","Chat"],["files","Files"],["search","Search"],["approvals",`Approvals ${approvals.length ? `(${approvals.length})` : ""}`],["audit","Audit"],["settings","Settings"]].map(([key,label]) => <button key={key} className={activeTab === key ? "nav-active" : ""} onClick={() => setActiveTab(key)}>{label}</button>)}</nav><section className="sidebar-foot"><p>Outbound inference is restricted to the configured loopback Ollama daemon.</p><RateLimitBadge status={rate}/></section></aside>
     <section className="content"><header className="topbar"><div><span className="eyebrow">SAFETY CONTROL PLANE</span><h1>{activeTab === "chat" ? "Agent session" : activeTab[0].toUpperCase() + activeTab.slice(1)}</h1></div><div className="top-actions">{session && <button className={`toggle ${session.dry_run ? "on" : ""}`} onClick={toggleDryRun} title="Changing dry-run is a logged user action">Dry run {session.dry_run ? "ON" : "OFF"}</button>}<KillSwitch disabled={!running} onKill={() => void stop()}/></div></header>
       {error && <div className="notice error"><strong>Local backend notice:</strong> {error}</div>}
-      {activeTab === "chat" && <section className="chat-layout"><div className="session-strip"><label>Model <select value={model} onChange={e => setModel(e.target.value)} disabled={!!session}>{!models.length && <option value="">No local models discovered</option>}{models.map(item => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label><label>Session <select value={session?.id || ""} onChange={e => { const found = sessions.find(item => item.id === e.target.value); if (found) void loadSession(found); }}><option value="">New session</option>{sessions.map(item => <option key={item.id} value={item.id}>{item.model} · {item.status} · {item.id.slice(0, 8)}</option>)}</select></label><span className="workspace-label">{settings?.workspace_root || "Loading workspace policy…"}</span></div><div className="safety-banner"><b>{session?.dry_run ?? settings?.dry_run_default ? "Dry-run protection active" : "Live apply mode"}</b><span>{session?.dry_run ?? settings?.dry_run_default ? "Every mutation is rendered as a proposal; no workspace content changes." : "Mutations still require an approval record unless you explicitly remember a scoped action."}</span></div><div className="transcript">{!transcript.length && <div className="empty"><b>Start with a focused workspace request.</b><p>The agent can search and read within the configured root. Edits, deletes, commits, checkout, and execution are approval-gated.</p></div>}{transcript.map(item => item.role === "tool" ? <ToolCallCard key={item.id} name={item.name || "tool"} argumentsValue={item.args} result={item.result} dryRun={item.dryRun} pending={item.pending} onRestore={typeof item.args === "object" && item.args !== null && "path" in item.args && typeof (item.args as { path?: unknown }).path === "string" ? (snapshot) => void restore(snapshot, (item.args as { path: string }).path) : undefined}/> : <article key={item.id} className={`bubble ${item.role}`}><span>{item.role === "user" ? "You" : "Agent"}</span><p>{item.content}</p></article>)}{liveText && <article className="bubble assistant streaming"><span>Agent · streaming</span><p>{liveText}</p></article>}</div><form className="composer" onSubmit={submit}><textarea value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Ask the local agent to inspect, search, or propose a scoped change…" disabled={running}/><button type="submit" disabled={running || !prompt.trim()}>{running ? "Running…" : "Run agent"}</button></form></section>}
+      {activeTab === "chat" && <section className="chat-layout"><div className="session-strip"><label>Model <select value={model} onChange={e => setModel(e.target.value)} disabled={!!session}>{!models.length && <option value="">No local models discovered</option>}{models.map(item => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label><label>Session <select value={session?.id || ""} onChange={e => { const found = sessions.find(item => item.id === e.target.value); if (found) void loadSession(found); }}><option value="">New session</option>{sessions.map(item => <option key={item.id} value={item.id}>{item.model} · {item.status} · {item.id.slice(0, 8)}</option>)}</select></label>{session && <div className="export-actions" style={{ display: "flex", gap: "0.25rem" }}><button type="button" onClick={() => exportSession("json")}>Export JSON</button><button type="button" onClick={() => exportSession("markdown")}>Export MD</button><button type="button" onClick={() => void forkSession()}>Fork</button></div>}<span className="workspace-label">{settings?.workspace_root || "Loading workspace policy…"}</span></div><div className="safety-banner"><b>{session?.dry_run ?? settings?.dry_run_default ? "Dry-run protection active" : "Live apply mode"}</b><span>{session?.dry_run ?? settings?.dry_run_default ? "Every mutation is rendered as a proposal; no workspace content changes." : "Mutations still require an approval record unless you explicitly remember a scoped action."}</span></div><div className="transcript">{!transcript.length && <div className="empty"><b>Start with a focused workspace request.</b><p>The agent can search and read within the configured root. Edits, deletes, commits, checkout, and execution are approval-gated.</p></div>}{transcript.map(item => item.role === "tool" ? <ToolCallCard key={item.id} name={item.name || "tool"} argumentsValue={item.args} result={item.result} dryRun={item.dryRun} pending={item.pending} onRestore={typeof item.args === "object" && item.args !== null && "path" in item.args && typeof (item.args as { path?: unknown }).path === "string" ? (snapshot) => void restore(snapshot, (item.args as { path: string }).path) : undefined}/> : <article key={item.id} className={`bubble ${item.role}`}><span>{item.role === "user" ? "You" : "Agent"}</span><p>{item.content}</p></article>)}{liveText && <article className="bubble assistant streaming"><span>Agent · streaming</span><p>{liveText}</p></article>}</div><form className="composer" onSubmit={submit}><textarea value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Ask the local agent to inspect, search, or propose a scoped change…" disabled={running}/><button type="submit" disabled={running || !prompt.trim()}>{running ? "Running…" : "Run agent"}</button></form></section>}
       {activeTab === "approvals" && <section className="stack">{approvals.length ? approvals.map(item => <ApprovalModal key={item.id} item={item} onResolve={(approved, remember) => void resolve(item, approved, remember)}/>) : <div className="empty"><b>No pending approvals.</b><p>Mutations pause the agent here before anything is applied.</p></div>}</section>}
       {activeTab === "files" && <section className="files-layout"><div className="file-list">{files.map(item => <button key={item.path} onClick={() => item.type === "file" && getJson<any>(`/api/files/content?path=${encodeURIComponent(item.path)}`).then(setPreview).catch(cause => setError(String(cause)))}><span>{item.type === "dir" ? "▾" : "·"}</span>{item.path}<small>{item.size ?? ""}</small></button>)}</div><div className="file-preview">{preview ? <><h3>{preview.path}</h3><pre>{preview.content}</pre></> : <div className="empty"><b>Read-only file preview</b><p>Select a text file. Credential-shaped paths and files beyond the read limit are denied by the backend.</p></div>}</div></section>}
-      {activeTab === "audit" && <section className="audit-table"><div className="audit-note">Append-only JSONL + SQLite mirror. Sensitive-looking fields are redacted before persistence.</div><table><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Result</th></tr></thead><tbody>{visibleAudit.map(item => <tr key={item.id}><td>{new Date(item.created_at).toLocaleTimeString()}</td><td>{item.actor}</td><td>{item.action_type}</td><td>{item.target || "—"}</td><td><span className={`badge ${item.result === "denied" || item.result === "error" ? "warn" : ""}`}>{item.result}</span></td></tr>)}</tbody></table>{!audit.length && <div className="empty"><b>Audit trail will appear here.</b></div>}</section>}
+      {activeTab === "search" && <section className="stack"><form className="composer" onSubmit={runSemanticSearch} style={{ display: "flex", gap: "0.5rem" }}><input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Semantic code query (e.g., 'where are rate limits handled?')" style={{ flex: 1, padding: "0.5rem", borderRadius: "4px", border: "1px solid #444", background: "#111", color: "#fff" }}/><button type="submit" disabled={searching || !searchQuery.trim()}>{searching ? "Searching…" : "Semantic Search"}</button></form><div className="file-preview">{searchResults.length ? searchResults.map((res: any, idx: number) => <div key={idx} style={{ marginBottom: "1rem", padding: "0.5rem", background: "#222", borderRadius: "4px" }}><b>{res.path} (chunk #{res.chunk_index}, score: {res.score})</b><pre>{res.chunk_text}</pre></div>) : <div className="empty"><b>Semantic Code Search</b><p>Search code vector embeddings powered by local Ollama.</p></div>}</div></section>}
+      {activeTab === "audit" && <section className="audit-table"><div className="audit-note" style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "0.5rem" }}><input type="text" value={auditQuery} onChange={e => setAuditQuery(e.target.value)} placeholder="Filter query…" style={{ padding: "0.25rem 0.5rem", background: "#111", border: "1px solid #444", color: "#fff" }}/><select value={auditActor} onChange={e => setAuditActor(e.target.value)} style={{ padding: "0.25rem", background: "#111", border: "1px solid #444", color: "#fff" }}><option value="">All Actors</option><option value="user">User</option><option value="agent">Agent</option></select><select value={auditResult} onChange={e => setAuditResult(e.target.value)} style={{ padding: "0.25rem", background: "#111", border: "1px solid #444", color: "#fff" }}><option value="">All Results</option><option value="success">Success</option><option value="approved">Approved</option><option value="denied">Denied</option></select><button type="button" onClick={exportAuditCsv} style={{ marginLeft: "auto" }}>Export CSV</button></div><table><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Result</th></tr></thead><tbody>{visibleAudit.map(item => <tr key={item.id}><td>{new Date(item.created_at).toLocaleTimeString()}</td><td>{item.actor}</td><td>{item.action_type}</td><td>{item.target || "—"}</td><td><span className={`badge ${item.result === "denied" || item.result === "error" ? "warn" : ""}`}>{item.result}</span></td></tr>)}</tbody></table>{!audit.length && <div className="empty"><b>Audit trail will appear here.</b></div>}</section>}
       {activeTab === "settings" && <section className="settings-card"><h2>Immutable safety configuration</h2><p>These values are loaded on backend startup. The UI is deliberately read-only: an agent cannot modify its own sandbox, allowlist, rate limits, or approval policy.</p><dl><dt>Workspace root</dt><dd>{settings?.workspace_root}</dd><dt>Max iterations</dt><dd>{settings?.limits?.max_iterations}</dd><dt>Wall-clock cap</dt><dd>{settings?.limits?.max_wall_clock_seconds}s</dd><dt>Execution policy</dt><dd>{settings?.execution?.os_sandbox_required ? "Linux user/mount/network/PID namespace required; fail-closed if unavailable" : "Enabled only with argv allowlist"}</dd><dt>Configured binaries</dt><dd>{settings?.execution?.allowlist?.join(", ")}</dd></dl><p className="muted">Rate limiting protects local GPU/CPU health, establishes backpressure for concurrent sessions, and prevents runaway agent loops. It is not a cloud billing control.</p></section>}
     </section>
   </main>;
