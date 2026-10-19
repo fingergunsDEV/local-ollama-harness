@@ -90,6 +90,67 @@ class SessionStore:
             rows = conn.execute("SELECT * FROM sessions ORDER BY created_at DESC LIMIT 100").fetchall()
         return [self._row(row) for row in rows]
 
+    def export_session(self, session_id: str, format_type: str = "json") -> str | dict[str, Any]:
+        session = self.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session {session_id} not found")
+        messages = self.messages(session_id)
+        if format_type.lower() == "markdown":
+            lines = [
+                f"# Session Export: {session['id']}",
+                f"- **Model**: {session['model']}",
+                f"- **Created At**: {session['created_at']}",
+                f"- **Status**: {session['status']}",
+                f"- **Dry Run**: {session['dry_run']}",
+                f"- **Workspace**: `{session['workspace_root']}`",
+                "",
+                "## Transcript",
+                "",
+            ]
+            for msg in messages:
+                role = msg["role"].upper()
+                content = msg["content"]
+                lines.append(f"### {role}")
+                lines.append(content)
+                lines.append("")
+            return "\n".join(lines)
+        else:
+            return {
+                "session": session,
+                "messages": messages,
+            }
+
+    def fork_session(self, session_id: str, from_message_id: str | None = None) -> dict[str, Any]:
+        session = self.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session {session_id} not found")
+
+        messages = self.messages(session_id)
+        if from_message_id:
+            cutoff_index = -1
+            for idx, msg in enumerate(messages):
+                if msg["id"] == from_message_id:
+                    cutoff_index = idx
+                    break
+            if cutoff_index != -1:
+                messages = messages[: cutoff_index + 1]
+
+        new_session = self.create_session(
+            model=session["model"],
+            dry_run=session["dry_run"],
+            workspace_root=session["workspace_root"],
+        )
+
+        for msg in messages:
+            self.add_message(
+                session_id=new_session["id"],
+                role=msg["role"],
+                content=msg["content"],
+                token_count=msg.get("token_count", 0),
+            )
+
+        return new_session
+
     def set_session_status(self, session_id: str, status: str) -> None:
         self._execute("UPDATE sessions SET status=? WHERE id=?", (status, session_id))
 
@@ -136,14 +197,36 @@ class SessionStore:
     def add_audit(self, record: dict[str, Any]) -> None:
         self._execute("INSERT INTO audit_log VALUES(?,?,?,?,?,?,?,?,?)", (str(uuid.uuid4()), record.get("session_id"), record["actor"], record["action_type"], record.get("tool_name"), record.get("target"), record["result"], json.dumps(record, sort_keys=True), record["timestamp"]))
 
-    def audit_entries(self, session_id: str | None = None, query: str = "") -> list[dict[str, Any]]:
-        where, values = "", []
+    def audit_entries(
+        self,
+        session_id: str | None = None,
+        query: str = "",
+        actor: str | None = None,
+        action_type: str | None = None,
+        result: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clauses: list[str] = []
+        values: list[Any] = []
+
         if session_id:
-            where += " WHERE session_id=?"; values.append(session_id)
+            where_clauses.append("session_id = ?")
+            values.append(session_id)
+        if actor:
+            where_clauses.append("actor = ?")
+            values.append(actor)
+        if action_type:
+            where_clauses.append("action_type = ?")
+            values.append(action_type)
+        if result:
+            where_clauses.append("result = ?")
+            values.append(result)
         if query:
-            where += (" AND " if where else " WHERE ") + "(target LIKE ? OR action_type LIKE ? OR result LIKE ?)"; values += [f"%{query}%"] * 3
+            where_clauses.append("(target LIKE ? OR action_type LIKE ? OR result LIKE ?)")
+            values.extend([f"%{query}%"] * 3)
+
+        where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
         with self._lock, self._connect() as conn:
-            rows = conn.execute("SELECT * FROM audit_log" + where + " ORDER BY created_at DESC LIMIT 500", values).fetchall()
+            rows = conn.execute("SELECT * FROM audit_log" + where_sql + " ORDER BY created_at DESC LIMIT 500", values).fetchall()
         return [self._row(row) for row in rows]
 
     @staticmethod

@@ -46,6 +46,9 @@ class SemanticSearchRequest(BaseModel):
     top_k: int = Field(default=5, ge=1, le=50)
     model: str = Field(default="nomic-embed-text")
 
+class ForkSessionRequest(BaseModel):
+    from_message_id: str | None = None
+
 
 class Runtime:
     def __init__(self, settings: Settings) -> None:
@@ -136,6 +139,36 @@ async def create_session(request: CreateSession) -> dict[str, Any]:
 async def get_session(session_id: str) -> dict[str, Any]:
     session = session_or_404(session_id); return {"session": session, "messages": runtime().store.messages(session_id)}
 
+@app.get("/api/sessions/{session_id}/export")
+async def export_session(session_id: str, format: str = "json") -> Any:
+    session_or_404(session_id)
+    try:
+        data = runtime().store.export_session(session_id, format_type=format)
+        if format.lower() == "markdown":
+            from fastapi.responses import PlainTextResponse
+            return PlainTextResponse(content=str(data), media_type="text/markdown")
+        return data
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+@app.post("/api/sessions/{session_id}/fork")
+async def fork_session(session_id: str, request: ForkSessionRequest = ForkSessionRequest()) -> dict[str, Any]:
+    session_or_404(session_id)
+    try:
+        new_session = runtime().store.fork_session(session_id, from_message_id=request.from_message_id)
+        runtime().audit.log(
+            session_id=new_session["id"],
+            actor="user",
+            action_type="session_fork",
+            tool_name=None,
+            target=session_id,
+            result="success",
+            dry_run=new_session["dry_run"],
+        )
+        return new_session
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
 @app.post("/api/sessions/{session_id}/dry-run")
 async def update_dry_run(session_id: str, request: DryRunUpdate) -> dict[str, Any]:
     session_or_404(session_id); runtime().store.set_dry_run(session_id, request.dry_run)
@@ -174,7 +207,38 @@ async def restore_snapshot(request: SnapshotRestore) -> dict[str, Any]:
     return result
 
 @app.get("/api/audit")
-async def audit(session_id: str | None = None, query: str = "") -> dict[str, Any]: return {"entries": runtime().store.audit_entries(session_id, query)}
+async def audit(
+    session_id: str | None = None,
+    query: str = "",
+    actor: str | None = None,
+    action_type: str | None = None,
+    result: str | None = None,
+    format: str = "json",
+) -> Any:
+    entries = runtime().store.audit_entries(
+        session_id=session_id, query=query, actor=actor, action_type=action_type, result=result
+    )
+    if format.lower() == "csv":
+        import csv
+        import io
+        from fastapi.responses import PlainTextResponse
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["id", "created_at", "session_id", "actor", "action_type", "tool_name", "target", "result"])
+        for entry in entries:
+            writer.writerow([
+                entry.get("id", ""),
+                entry.get("created_at", ""),
+                entry.get("session_id", ""),
+                entry.get("actor", ""),
+                entry.get("action_type", ""),
+                entry.get("tool_name", ""),
+                entry.get("target", ""),
+                entry.get("result", ""),
+            ])
+        return PlainTextResponse(content=output.getvalue(), media_type="text/csv")
+    return {"entries": entries}
 
 @app.get("/api/files")
 async def files(path: str = ".", depth: int = 3) -> dict[str, Any]:
