@@ -146,6 +146,64 @@ class SessionStore:
             rows = conn.execute("SELECT * FROM audit_log" + where + " ORDER BY created_at DESC LIMIT 500", values).fetchall()
         return [self._row(row) for row in rows]
 
+    def export_session(self, session_id: str, fmt: str = "json") -> dict[str, Any] | str | None:
+        session = self.get_session(session_id)
+        if not session:
+            return None
+
+        with self._lock, self._connect() as conn:
+            msgs = [self._row(r) for r in conn.execute("SELECT * FROM messages WHERE session_id=? ORDER BY created_at", (session_id,)).fetchall()]
+            tools = [self._row(r) for r in conn.execute("SELECT * FROM tool_calls WHERE session_id=? ORDER BY created_at", (session_id,)).fetchall()]
+            apprs = [self._row(r) for r in conn.execute("SELECT * FROM approvals WHERE session_id=? ORDER BY rowid", (session_id,)).fetchall()]
+
+        if fmt == "json":
+            return {
+                "session": session,
+                "messages": msgs,
+                "tool_calls": tools,
+                "approvals": apprs,
+            }
+
+        md_lines = [
+            f"# Session Transcript: {session['id']}",
+            "",
+            f"- **Model:** {session['model']}",
+            f"- **Created At:** {session['created_at']}",
+            f"- **Status:** {session['status']}",
+            f"- **Dry Run:** {session['dry_run']}",
+            f"- **Workspace Root:** {session['workspace_root']}",
+            "",
+            "## Messages",
+            "",
+        ]
+        for m in msgs:
+            md_lines.extend([
+                f"### {m['role'].upper()} ({m['created_at']})",
+                "",
+                m['content'],
+                "",
+            ])
+
+        if tools:
+            md_lines.extend(["## Tool Calls", ""])
+            for t in tools:
+                md_lines.extend([
+                    f"- **{t['tool_name']}** (Status: `{t['status']}`, Dry Run: `{t['dry_run']}`)",
+                    f"  - Parameters: `{json.dumps(t['params_json'])}`",
+                ])
+                if t.get("result_json"):
+                    md_lines.append(f"  - Result: `{json.dumps(t['result_json'])}`")
+                md_lines.append("")
+
+        if apprs:
+            md_lines.extend(["## Approvals", ""])
+            for a in apprs:
+                resolved = f" (by {a['resolved_by']} at {a['resolved_at']})" if a.get("resolved_by") else ""
+                md_lines.append(f"- **Action:** `{a['action_type']}` | **Status:** `{a['status']}`{resolved}")
+            md_lines.append("")
+
+        return "\n".join(md_lines)
+
     @staticmethod
     def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
         if row is None: return None
