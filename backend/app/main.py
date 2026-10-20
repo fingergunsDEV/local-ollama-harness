@@ -5,9 +5,9 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.audit.logger import AuditLogger
@@ -135,6 +135,17 @@ async def create_session(request: CreateSession) -> dict[str, Any]:
 @app.get("/api/sessions/{session_id}")
 async def get_session(session_id: str) -> dict[str, Any]:
     session = session_or_404(session_id); return {"session": session, "messages": runtime().store.messages(session_id)}
+
+@app.get("/api/sessions/{session_id}/export")
+async def export_session(session_id: str, format: str = Query("json", alias="format")) -> Any:
+    session_or_404(session_id)
+    fmt = format.lower()
+    if fmt not in ("json", "markdown"):
+        raise HTTPException(400, "Invalid export format. Must be 'json' or 'markdown'.")
+    exported = runtime().store.export_session(session_id, fmt=fmt)
+    if fmt == "markdown":
+        return PlainTextResponse(content=str(exported), media_type="text/markdown")
+    return exported
 
 @app.post("/api/sessions/{session_id}/dry-run")
 async def update_dry_run(session_id: str, request: DryRunUpdate) -> dict[str, Any]:
