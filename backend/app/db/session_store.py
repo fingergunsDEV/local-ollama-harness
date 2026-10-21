@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 import sqlite3
 import threading
@@ -141,10 +143,54 @@ class SessionStore:
         if session_id:
             where += " WHERE session_id=?"; values.append(session_id)
         if query:
-            where += (" AND " if where else " WHERE ") + "(target LIKE ? OR action_type LIKE ? OR result LIKE ?)"; values += [f"%{query}%"] * 3
+            where += (" AND " if where else " WHERE ") + "(target LIKE ? OR action_type LIKE ? OR result LIKE ? OR actor LIKE ?)"; values += [f"%{query}%"] * 4
         with self._lock, self._connect() as conn:
             rows = conn.execute("SELECT * FROM audit_log" + where + " ORDER BY created_at DESC LIMIT 500", values).fetchall()
         return [self._row(row) for row in rows]
+
+    def export_session(self, session_id: str, format_type: str = "markdown") -> str:
+        session = self.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session {session_id} not found")
+        msgs = self.messages(session_id)
+
+        if format_type.lower() == "json":
+            return json.dumps({"session": session, "messages": msgs}, indent=2)
+
+        lines = [
+            f"# Session Transcript: {session['id']}",
+            f"- **Model:** {session['model']}",
+            f"- **Created At:** {session['created_at']}",
+            f"- **Status:** {session['status']}",
+            f"- **Dry Run:** {session['dry_run']}",
+            "",
+            "---",
+            "",
+        ]
+        for m in msgs:
+            role = m["role"].upper()
+            lines.append(f"### {role} ({m['created_at']})")
+            lines.append(m["content"])
+            lines.append("")
+
+        return "\n".join(lines)
+
+    def export_audit_log(
+        self, session_id: str | None = None, query: str = "", format_type: str = "json"
+    ) -> str:
+        entries = self.audit_entries(session_id=session_id, query=query)
+        if format_type.lower() == "csv":
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerow(["id", "created_at", "session_id", "actor", "action_type", "tool_name", "target", "result"])
+            for e in entries:
+                writer.writerow([
+                    e["id"], e["created_at"], e.get("session_id") or "", e["actor"], e["action_type"],
+                    e.get("tool_name") or "", e.get("target") or "", e["result"]
+                ])
+            return output.getvalue()
+
+        return json.dumps({"audit_entries": entries}, indent=2)
 
     @staticmethod
     def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
