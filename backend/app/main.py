@@ -5,7 +5,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -136,6 +136,16 @@ async def create_session(request: CreateSession) -> dict[str, Any]:
 async def get_session(session_id: str) -> dict[str, Any]:
     session = session_or_404(session_id); return {"session": session, "messages": runtime().store.messages(session_id)}
 
+@app.get("/api/sessions/{session_id}/export")
+async def export_session(session_id: str, format: str = Query("markdown", regex="^(markdown|json)$")) -> Response:
+    session_or_404(session_id)
+    try:
+        content = runtime().store.export_session(session_id, format_type=format)
+        media_type = "text/markdown" if format == "markdown" else "application/json"
+        return Response(content=content, media_type=media_type)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
 @app.post("/api/sessions/{session_id}/dry-run")
 async def update_dry_run(session_id: str, request: DryRunUpdate) -> dict[str, Any]:
     session_or_404(session_id); runtime().store.set_dry_run(session_id, request.dry_run)
@@ -175,6 +185,12 @@ async def restore_snapshot(request: SnapshotRestore) -> dict[str, Any]:
 
 @app.get("/api/audit")
 async def audit(session_id: str | None = None, query: str = "") -> dict[str, Any]: return {"entries": runtime().store.audit_entries(session_id, query)}
+
+@app.get("/api/audit/export")
+async def export_audit(session_id: str | None = None, query: str = "", format: str = Query("json", regex="^(json|csv)$")) -> Response:
+    content = runtime().store.export_audit_log(session_id=session_id, query=query, format_type=format)
+    media_type = "text/csv" if format == "csv" else "application/json"
+    return Response(content=content, media_type=media_type)
 
 @app.get("/api/files")
 async def files(path: str = ".", depth: int = 3) -> dict[str, Any]:
