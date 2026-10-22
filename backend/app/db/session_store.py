@@ -80,6 +80,42 @@ class SessionStore:
         record["dry_run"] = bool(record["dry_run"])
         return record
 
+    def fork_session(self, session_id: str, up_to_message_id: str | None = None) -> dict[str, Any]:
+        """Fork an existing session up to a specific message_id (or all messages if None)."""
+        source_session = self.get_session(session_id)
+        if not source_session:
+            raise KeyError("Source session not found")
+
+        source_messages = self.messages(session_id)
+        if up_to_message_id:
+            cutoff = False
+            filtered_messages = []
+            for msg in source_messages:
+                filtered_messages.append(msg)
+                if msg["id"] == up_to_message_id:
+                    cutoff = True
+                    break
+            if not cutoff:
+                raise KeyError("Checkpoint message_id not found in session history")
+        else:
+            filtered_messages = source_messages
+
+        new_session = self.create_session(
+            model=source_session["model"],
+            dry_run=source_session["dry_run"],
+            workspace_root=source_session["workspace_root"],
+        )
+
+        for msg in filtered_messages:
+            self.add_message(
+                session_id=new_session["id"],
+                role=msg["role"],
+                content=msg["content"],
+                token_count=msg.get("token_count", 0),
+            )
+
+        return new_session
+
     def get_session(self, session_id: str) -> dict[str, Any] | None:
         with self._lock, self._connect() as conn:
             row = conn.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
@@ -136,14 +172,52 @@ class SessionStore:
     def add_audit(self, record: dict[str, Any]) -> None:
         self._execute("INSERT INTO audit_log VALUES(?,?,?,?,?,?,?,?,?)", (str(uuid.uuid4()), record.get("session_id"), record["actor"], record["action_type"], record.get("tool_name"), record.get("target"), record["result"], json.dumps(record, sort_keys=True), record["timestamp"]))
 
-    def audit_entries(self, session_id: str | None = None, query: str = "") -> list[dict[str, Any]]:
-        where, values = "", []
+    def audit_entries(
+        self,
+        session_id: str | None = None,
+        query: str = "",
+        actor: str | None = None,
+        action_type: str | None = None,
+        tool_name: str | None = None,
+        result: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        conditions: list[str] = []
+        values: list[Any] = []
+
         if session_id:
-            where += " WHERE session_id=?"; values.append(session_id)
+            conditions.append("session_id = ?")
+            values.append(session_id)
+        if actor:
+            conditions.append("actor = ?")
+            values.append(actor)
+        if action_type:
+            conditions.append("action_type = ?")
+            values.append(action_type)
+        if tool_name:
+            conditions.append("tool_name = ?")
+            values.append(tool_name)
+        if result:
+            conditions.append("result = ?")
+            values.append(result)
+        if start_date:
+            conditions.append("created_at >= ?")
+            values.append(start_date)
+        if end_date:
+            conditions.append("created_at <= ?")
+            values.append(end_date)
         if query:
-            where += (" AND " if where else " WHERE ") + "(target LIKE ? OR action_type LIKE ? OR result LIKE ?)"; values += [f"%{query}%"] * 3
+            conditions.append("(target LIKE ? OR action_type LIKE ? OR result LIKE ?)")
+            values.extend([f"%{query}%"] * 3)
+
+        where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
+        sql = f"SELECT * FROM audit_log{where_clause} ORDER BY created_at DESC LIMIT ?"
+        values.append(limit)
+
         with self._lock, self._connect() as conn:
-            rows = conn.execute("SELECT * FROM audit_log" + where + " ORDER BY created_at DESC LIMIT 500", values).fetchall()
+            rows = conn.execute(sql, values).fetchall()
         return [self._row(row) for row in rows]
 
     @staticmethod
