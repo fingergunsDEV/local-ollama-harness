@@ -8,6 +8,8 @@ def policy(settings, sandbox): return CommandAllowlist(settings, sandbox)
 def test_rejects_shell_injection(settings, sandbox):
     with pytest.raises(CommandDenied): policy(settings, sandbox).validate(["ls", ";id"])
     with pytest.raises(CommandDenied): policy(settings, sandbox).validate(["grep", "$(whoami)"])
+    with pytest.raises(CommandDenied): policy(settings, sandbox).validate(["grep", "${PATH}"])
+    with pytest.raises(CommandDenied): policy(settings, sandbox).validate(["cat", "<(ls)"])
 
 def test_rejects_unlisted_and_runtime_binaries(settings, sandbox):
     with pytest.raises(CommandDenied): policy(settings, sandbox).validate(["sh", "-c", "id"])

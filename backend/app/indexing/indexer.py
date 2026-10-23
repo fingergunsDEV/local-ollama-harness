@@ -94,6 +94,27 @@ class LocalIndexer:
                 )
         return len(chunks)
 
+    def index_status(self) -> dict[str, Any]:
+        """Return counts of indexed files, total embedding chunks, and latest indexing timestamp."""
+        with self.store._lock, self.store._connect() as conn:
+            files_count_row = conn.execute("SELECT COUNT(*) FROM file_index").fetchone()
+            files_count = files_count_row[0] if files_count_row else 0
+
+            last_indexed_row = conn.execute("SELECT MAX(indexed_at) FROM file_index").fetchone()
+            last_indexed = last_indexed_row[0] if last_indexed_row else None
+
+            chunks_count = 0
+            table_check = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='file_embeddings'").fetchone()
+            if table_check:
+                chunks_count_row = conn.execute("SELECT COUNT(*) FROM file_embeddings").fetchone()
+                chunks_count = chunks_count_row[0] if chunks_count_row else 0
+
+        return {
+            "indexed_files": files_count,
+            "embedding_chunks": chunks_count,
+            "last_indexed_at": last_indexed,
+        }
+
     def search_embeddings(self, query_vector: list[float], top_k: int = 5) -> list[dict[str, Any]]:
         """Perform vector cosine similarity search over stored chunk embeddings."""
         with self.store._lock, self.store._connect() as conn:

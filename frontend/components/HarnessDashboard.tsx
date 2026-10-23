@@ -12,6 +12,7 @@ type Transcript = { id: string; role: "user" | "assistant" | "tool" | "system"; 
 type Approval = { id: string; session_id: string; action_type: string; diff_or_plan: string };
 type FileEntry = { path: string; type: string; size: number | null };
 type Audit = { id: string; created_at: string; actor: string; action_type: string; target: string | null; result: string; payload_json: Record<string, unknown> };
+type IndexStatus = { indexed_files: number; embedding_chunks: number; last_indexed_at: string | null };
 
 async function getJson<T>(path: string): Promise<T> { const response = await fetch(`${API}${path}`); if (!response.ok) throw new Error(await response.text()); return response.json(); }
 async function postJson<T>(path: string, body?: unknown): Promise<T> { const response = await fetch(`${API}${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined }); if (!response.ok) throw new Error(await response.text()); return response.json(); }
@@ -20,14 +21,25 @@ export default function HarnessDashboard() {
   const [settings, setSettings] = useState<any>(null); const [models, setModels] = useState<any[]>([]); const [sessions, setSessions] = useState<Session[]>([]);
   const [session, setSession] = useState<Session | null>(null); const [model, setModel] = useState(""); const [prompt, setPrompt] = useState(""); const [transcript, setTranscript] = useState<Transcript[]>([]);
   const [liveText, setLiveText] = useState(""); const [running, setRunning] = useState(false); const [error, setError] = useState(""); const [rate, setRate] = useState<any>(null);
-  const [approvals, setApprovals] = useState<Approval[]>([]); const [files, setFiles] = useState<FileEntry[]>([]); const [preview, setPreview] = useState<any>(null); const [audit, setAudit] = useState<Audit[]>([]); const [activeTab, setActiveTab] = useState("chat");
+  const [approvals, setApprovals] = useState<Approval[]>([]); const [files, setFiles] = useState<FileEntry[]>([]); const [preview, setPreview] = useState<any>(null); const [audit, setAudit] = useState<Audit[]>([]); const [auditQuery, setAuditQuery] = useState(""); const [indexStatus, setIndexStatus] = useState<IndexStatus | null>(null); const [activeTab, setActiveTab] = useState("chat");
 
   const refresh = useCallback(async () => {
     try {
-      const [s, modelsData, sessionsData, rateData, approvalsData, filesData, auditData] = await Promise.all([getJson<any>("/api/settings"), getJson<any>("/api/models"), getJson<any>("/api/sessions"), getJson<any>("/api/rate-status"), getJson<any>("/api/approvals"), getJson<any>("/api/files?path=.&depth=3"), getJson<any>("/api/audit")]);
-      setSettings(s); setModels(modelsData.models || []); setModel((current) => current || modelsData.models?.[0]?.name || ""); setSessions(sessionsData.sessions || []); setRate(rateData); setApprovals(approvalsData.approvals || []); setFiles(filesData.entries || []); setAudit(auditData.entries || []); setError("");
+      const auditUrl = `/api/audit${auditQuery.trim() ? `?query=${encodeURIComponent(auditQuery.trim())}` : ""}`;
+      const [s, modelsData, sessionsData, rateData, approvalsData, filesData, auditData, idxStatus] = await Promise.all([
+        getJson<any>("/api/settings"),
+        getJson<any>("/api/models"),
+        getJson<any>("/api/sessions"),
+        getJson<any>("/api/rate-status"),
+        getJson<any>("/api/approvals"),
+        getJson<any>("/api/files?path=.&depth=3"),
+        getJson<any>(auditUrl),
+        getJson<any>("/api/index/status").catch(() => null),
+      ]);
+      setSettings(s); setModels(modelsData.models || []); setModel((current) => current || modelsData.models?.[0]?.name || ""); setSessions(sessionsData.sessions || []); setRate(rateData); setApprovals(approvalsData.approvals || []); setFiles(filesData.entries || []); setAudit(auditData.entries || []); if (idxStatus) setIndexStatus(idxStatus); setError("");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to reach the local backend"); }
-  }, []);
+  }, [auditQuery]);
+
   useEffect(() => { void refresh(); const id = window.setInterval(() => { void getJson<any>("/api/rate-status").then(setRate).catch(() => undefined); void getJson<any>("/api/approvals").then(x => setApprovals(x.approvals || [])).catch(() => undefined); }, 2500); return () => window.clearInterval(id); }, [refresh]);
 
   const loadSession = async (candidate: Session) => { try { const data = await getJson<any>(`/api/sessions/${candidate.id}`); setSession(data.session); setTranscript((data.messages || []).map((m: any) => { if (m.role !== "tool") return { id: m.id, role: m.role, content: m.content }; try { return { id: m.id, role: "tool", name: "persisted tool result", result: JSON.parse(m.content) }; } catch { return { id: m.id, role: "tool", name: "persisted tool result", result: { content: m.content } }; } })); setActiveTab("chat"); } catch (cause) { setError(String(cause)); } };
@@ -36,6 +48,27 @@ export default function HarnessDashboard() {
   const resolve = async (item: Approval, approved: boolean, remember: boolean) => { await postJson(`/api/approvals/${item.id}/resolve`, { approved, remember_for_session: remember }); await refresh(); };
   const stop = async () => { if (session) await postJson(`/api/sessions/${session.id}/kill`); };
   const restore = async (snapshot: string, path: string) => { try { await postJson("/api/snapshots/restore", { snapshot_id: snapshot, path }); setError(""); await refresh(); } catch (cause) { setError(cause instanceof Error ? cause.message : "Snapshot restore failed"); } };
+
+  const forkSession = async () => {
+    if (!session) return;
+    try {
+      const forked = await postJson<Session>(`/api/sessions/${session.id}/fork`);
+      setSessions(items => [forked, ...items]);
+      await loadSession(forked);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Fork session failed");
+    }
+  };
+
+  const refreshIndex = async () => {
+    try {
+      await postJson("/api/index/refresh");
+      const updatedStatus = await getJson<any>("/api/index/status");
+      setIndexStatus(updatedStatus);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Index refresh failed");
+    }
+  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault(); const message = prompt.trim(); if (!message || running) return;
@@ -51,14 +84,47 @@ export default function HarnessDashboard() {
   };
 
   const visibleAudit = useMemo(() => audit.slice(0, 80), [audit]);
+
   return <main className="shell">
     <aside className="sidebar"><div className="brand"><span className="brand-mark">◉</span><div><b>LOCAL HARNESS</b><small>Ollama · workspace-bound</small></div></div><nav>{[["chat","Chat"],["files","Files"],["approvals",`Approvals ${approvals.length ? `(${approvals.length})` : ""}`],["audit","Audit"],["settings","Settings"]].map(([key,label]) => <button key={key} className={activeTab === key ? "nav-active" : ""} onClick={() => setActiveTab(key)}>{label}</button>)}</nav><section className="sidebar-foot"><p>Outbound inference is restricted to the configured loopback Ollama daemon.</p><RateLimitBadge status={rate}/></section></aside>
     <section className="content"><header className="topbar"><div><span className="eyebrow">SAFETY CONTROL PLANE</span><h1>{activeTab === "chat" ? "Agent session" : activeTab[0].toUpperCase() + activeTab.slice(1)}</h1></div><div className="top-actions">{session && <button className={`toggle ${session.dry_run ? "on" : ""}`} onClick={toggleDryRun} title="Changing dry-run is a logged user action">Dry run {session.dry_run ? "ON" : "OFF"}</button>}<KillSwitch disabled={!running} onKill={() => void stop()}/></div></header>
       {error && <div className="notice error"><strong>Local backend notice:</strong> {error}</div>}
-      {activeTab === "chat" && <section className="chat-layout"><div className="session-strip"><label>Model <select value={model} onChange={e => setModel(e.target.value)} disabled={!!session}>{!models.length && <option value="">No local models discovered</option>}{models.map(item => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label><label>Session <select value={session?.id || ""} onChange={e => { const found = sessions.find(item => item.id === e.target.value); if (found) void loadSession(found); }}><option value="">New session</option>{sessions.map(item => <option key={item.id} value={item.id}>{item.model} · {item.status} · {item.id.slice(0, 8)}</option>)}</select></label><span className="workspace-label">{settings?.workspace_root || "Loading workspace policy…"}</span></div><div className="safety-banner"><b>{session?.dry_run ?? settings?.dry_run_default ? "Dry-run protection active" : "Live apply mode"}</b><span>{session?.dry_run ?? settings?.dry_run_default ? "Every mutation is rendered as a proposal; no workspace content changes." : "Mutations still require an approval record unless you explicitly remember a scoped action."}</span></div><div className="transcript">{!transcript.length && <div className="empty"><b>Start with a focused workspace request.</b><p>The agent can search and read within the configured root. Edits, deletes, commits, checkout, and execution are approval-gated.</p></div>}{transcript.map(item => item.role === "tool" ? <ToolCallCard key={item.id} name={item.name || "tool"} argumentsValue={item.args} result={item.result} dryRun={item.dryRun} pending={item.pending} onRestore={typeof item.args === "object" && item.args !== null && "path" in item.args && typeof (item.args as { path?: unknown }).path === "string" ? (snapshot) => void restore(snapshot, (item.args as { path: string }).path) : undefined}/> : <article key={item.id} className={`bubble ${item.role}`}><span>{item.role === "user" ? "You" : "Agent"}</span><p>{item.content}</p></article>)}{liveText && <article className="bubble assistant streaming"><span>Agent · streaming</span><p>{liveText}</p></article>}</div><form className="composer" onSubmit={submit}><textarea value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Ask the local agent to inspect, search, or propose a scoped change…" disabled={running}/><button type="submit" disabled={running || !prompt.trim()}>{running ? "Running…" : "Run agent"}</button></form></section>}
+      {activeTab === "chat" && <section className="chat-layout">
+        <div className="session-strip">
+          <label>Model <select value={model} onChange={e => setModel(e.target.value)} disabled={!!session}>{!models.length && <option value="">No local models discovered</option>}{models.map(item => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label>
+          <label>Session <select value={session?.id || ""} onChange={e => { const found = sessions.find(item => item.id === e.target.value); if (found) void loadSession(found); }}><option value="">New session</option>{sessions.map(item => <option key={item.id} value={item.id}>{item.model} · {item.status} · {item.id.slice(0, 8)}</option>)}</select></label>
+          {session && (
+            <div className="session-actions" style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+              <button className="btn-sm" onClick={() => window.open(`${API}/api/sessions/${session.id}/export?format=markdown`)} title="Export session as Markdown">Export MD</button>
+              <button className="btn-sm" onClick={forkSession} title="Branch new session from current state">Fork Session</button>
+            </div>
+          )}
+          <span className="workspace-label">{settings?.workspace_root || "Loading workspace policy…"}</span>
+        </div>
+        <div className="safety-banner"><b>{session?.dry_run ?? settings?.dry_run_default ? "Dry-run protection active" : "Live apply mode"}</b><span>{session?.dry_run ?? settings?.dry_run_default ? "Every mutation is rendered as a proposal; no workspace content changes." : "Mutations still require an approval record unless you explicitly remember a scoped action."}</span></div>
+        <div className="transcript">{!transcript.length && <div className="empty"><b>Start with a focused workspace request.</b><p>The agent can search and read within the configured root. Edits, deletes, commits, checkout, and execution are approval-gated.</p></div>}{transcript.map(item => item.role === "tool" ? <ToolCallCard key={item.id} name={item.name || "tool"} argumentsValue={item.args} result={item.result} dryRun={item.dryRun} pending={item.pending} onRestore={typeof item.args === "object" && item.args !== null && "path" in item.args && typeof (item.args as { path?: unknown }).path === "string" ? (snapshot) => void restore(snapshot, (item.args as { path: string }).path) : undefined}/> : <article key={item.id} className={`bubble ${item.role}`}><span>{item.role === "user" ? "You" : "Agent"}</span><p>{item.content}</p></article>)}{liveText && <article className="bubble assistant streaming"><span>Agent · streaming</span><p>{liveText}</p></article>}</div>
+        <form className="composer" onSubmit={submit}><textarea value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Ask the local agent to inspect, search, or propose a scoped change…" disabled={running}/><button type="submit" disabled={running || !prompt.trim()}>{running ? "Running…" : "Run agent"}</button></form>
+      </section>}
       {activeTab === "approvals" && <section className="stack">{approvals.length ? approvals.map(item => <ApprovalModal key={item.id} item={item} onResolve={(approved, remember) => void resolve(item, approved, remember)}/>) : <div className="empty"><b>No pending approvals.</b><p>Mutations pause the agent here before anything is applied.</p></div>}</section>}
-      {activeTab === "files" && <section className="files-layout"><div className="file-list">{files.map(item => <button key={item.path} onClick={() => item.type === "file" && getJson<any>(`/api/files/content?path=${encodeURIComponent(item.path)}`).then(setPreview).catch(cause => setError(String(cause)))}><span>{item.type === "dir" ? "▾" : "·"}</span>{item.path}<small>{item.size ?? ""}</small></button>)}</div><div className="file-preview">{preview ? <><h3>{preview.path}</h3><pre>{preview.content}</pre></> : <div className="empty"><b>Read-only file preview</b><p>Select a text file. Credential-shaped paths and files beyond the read limit are denied by the backend.</p></div>}</div></section>}
-      {activeTab === "audit" && <section className="audit-table"><div className="audit-note">Append-only JSONL + SQLite mirror. Sensitive-looking fields are redacted before persistence.</div><table><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Result</th></tr></thead><tbody>{visibleAudit.map(item => <tr key={item.id}><td>{new Date(item.created_at).toLocaleTimeString()}</td><td>{item.actor}</td><td>{item.action_type}</td><td>{item.target || "—"}</td><td><span className={`badge ${item.result === "denied" || item.result === "error" ? "warn" : ""}`}>{item.result}</span></td></tr>)}</tbody></table>{!audit.length && <div className="empty"><b>Audit trail will appear here.</b></div>}</section>}
+      {activeTab === "files" && <section className="files-layout">
+        <div style={{ gridColumn: "1 / -1", padding: "0.5rem 1rem", background: "var(--bg-secondary, #1e1e2e)", borderBottom: "1px solid var(--border, #313244)", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.85rem" }}>
+          <span><strong>Workspace Index:</strong> {indexStatus?.indexed_files ?? 0} files indexed | {indexStatus?.embedding_chunks ?? 0} vector chunks</span>
+          <button onClick={refreshIndex} style={{ padding: "0.2rem 0.6rem", fontSize: "0.8rem", cursor: "pointer" }}>Refresh Index</button>
+        </div>
+        <div className="file-list">{files.map(item => <button key={item.path} onClick={() => item.type === "file" && getJson<any>(`/api/files/content?path=${encodeURIComponent(item.path)}`).then(setPreview).catch(cause => setError(String(cause)))}><span>{item.type === "dir" ? "▾" : "·"}</span>{item.path}<small>{item.size ?? ""}</small></button>)}</div>
+        <div className="file-preview">{preview ? <><h3>{preview.path}</h3><pre>{preview.content}</pre></> : <div className="empty"><b>Read-only file preview</b><p>Select a text file. Credential-shaped paths and files beyond the read limit are denied by the backend.</p></div>}</div>
+      </section>}
+      {activeTab === "audit" && <section className="audit-table">
+        <div className="audit-note" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem" }}>
+          <span>Append-only JSONL + SQLite mirror. Sensitive-looking fields are redacted before persistence.</span>
+          <div style={{ display: "flex", gap: "0.5rem" }}>
+            <input type="text" value={auditQuery} onChange={e => setAuditQuery(e.target.value)} placeholder="Filter audit logs..." style={{ padding: "0.2rem 0.5rem", fontSize: "0.8rem" }} />
+            <button onClick={() => window.open(`${API}/api/audit?format=csv`)} style={{ padding: "0.2rem 0.6rem", fontSize: "0.8rem", cursor: "pointer" }}>Export CSV</button>
+          </div>
+        </div>
+        <table><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Result</th></tr></thead><tbody>{visibleAudit.map(item => <tr key={item.id}><td>{new Date(item.created_at).toLocaleTimeString()}</td><td>{item.actor}</td><td>{item.action_type}</td><td>{item.target || "—"}</td><td><span className={`badge ${item.result === "denied" || item.result === "error" ? "warn" : ""}`}>{item.result}</span></td></tr>)}</tbody></table>
+        {!audit.length && <div className="empty"><b>Audit trail will appear here.</b></div>}
+      </section>}
       {activeTab === "settings" && <section className="settings-card"><h2>Immutable safety configuration</h2><p>These values are loaded on backend startup. The UI is deliberately read-only: an agent cannot modify its own sandbox, allowlist, rate limits, or approval policy.</p><dl><dt>Workspace root</dt><dd>{settings?.workspace_root}</dd><dt>Max iterations</dt><dd>{settings?.limits?.max_iterations}</dd><dt>Wall-clock cap</dt><dd>{settings?.limits?.max_wall_clock_seconds}s</dd><dt>Execution policy</dt><dd>{settings?.execution?.os_sandbox_required ? "Linux user/mount/network/PID namespace required; fail-closed if unavailable" : "Enabled only with argv allowlist"}</dd><dt>Configured binaries</dt><dd>{settings?.execution?.allowlist?.join(", ")}</dd></dl><p className="muted">Rate limiting protects local GPU/CPU health, establishes backpressure for concurrent sessions, and prevents runaway agent loops. It is not a cloud billing control.</p></section>}
     </section>
   </main>;

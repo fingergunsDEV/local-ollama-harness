@@ -52,3 +52,8 @@ async def test_embeddings_generation_and_search(settings, sandbox, store):
     search_tools = SearchTools(settings, sandbox, indexer)
     search_res = await search_tools.semantic_search("FastAPI framework", mock_provider, top_k=2)
     assert len(search_res["results"]) > 0
+
+    status = indexer.index_status()
+    assert status["indexed_files"] >= 1
+    assert status["embedding_chunks"] == chunks_count
+    assert status["last_indexed_at"] is not None
