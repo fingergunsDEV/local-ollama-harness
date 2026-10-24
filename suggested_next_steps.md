@@ -28,18 +28,18 @@ Following an exhaustive scan of the backend Python codebase (`app/`) and Next.js
   * Markdown and JSON session transcript export (`GET /api/sessions/{session_id}/export?format=markdown|json`).
   * Point-in-time session branching/forking from any message or tool checkpoint (`POST /api/sessions/{session_id}/fork`).
 
-### 4. Advanced Process Sandboxing & Platform Adaptability (Future Phase)
-* **Status:** Proposed
-* **Proposed Enhancement:**
-  * Implement an optional Docker/Podman or bubblewrap container adapter for non-Linux or containerized developer environments.
-  * Enhance allowlist regex matching to detect obfuscated commands or chained arguments.
+### 4. Control Plane Frontend UI Integration (In Progress / Completed)
+* **Status:** **Completed**
+* **Capabilities Implemented:**
+  * **Session Management UI**: One-click Markdown/JSON session export and session forking/branching directly from the session strip.
+  * **Audit Log Search & CSV Export UI**: Multi-column search/filtering bar (text query, action type, result) and direct CSV download.
+  * **Workspace Indexing & Semantic Search UI**: Manual workspace re-indexing button and live semantic vector search interface in the Files tab.
 
-### 5. Frontend UI & Real-Time Monitoring Enhancements (Future Phase)
-* **Status:** Proposed
-* **Proposed Enhancement:**
-  * Add an interactive visual representation of workspace file tree indexing status and embedding status badges in the UI.
-  * Provide live latency and tokens-per-second metrics during stream generation.
-  * Add dark/light mode toggle persistence and accessibility keyboard navigation shortcuts.
+### 5. Advanced Process Sandboxing & Platform Adaptability (Future Phase)
+* **Status:** **In Progress / Proposed**
+* **Capabilities Implemented / Proposed:**
+  * Sandbox adapter status reporting (`linux-namespaces` availability and configuration status) exposed in `GET /api/settings`.
+  * Future container adapter (Docker/Podman or bubblewrap) for non-Linux or containerized developer environments.
 
 ---
 
@@ -49,5 +49,5 @@ Following an exhaustive scan of the backend Python codebase (`app/`) and Next.js
 |---|---|---|---|
 | **Phase 1** | Local Ollama Semantic Indexing & Vector Search | **Completed** | High-precision codebase context retrieval for local LLMs |
 | **Phase 2** | Audit Filtering & Session Export / Forking | **Completed** | Complete auditability and reproducible developer workflows |
-| **Phase 3** | Cross-Platform Container Sandbox (Docker/bwrap) | Proposed | Broadened platform support without sacrificing safety posture |
-| **Phase 4** | Enhanced UI Telemetry & Workspace File Explorer | Proposed | Real-time agent execution insights and improved UX |
+| **Phase 3** | Control Plane Frontend UI Integration (Export/Fork/Audit/Index) | **Completed** | Intuitive UX for session management, audit filtering, and vector search |
+| **Phase 4** | Cross-Platform Container Sandbox (Docker/bwrap) & Telemetry | Proposed | Broadened platform support without sacrificing safety posture |

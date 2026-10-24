@@ -105,7 +105,29 @@ async def model_capabilities(model: str) -> dict[str, Any]:
 @app.get("/api/settings")
 async def public_settings() -> dict[str, Any]:
     cfg = runtime().settings
-    return {"workspace_root": str(cfg.workspace_root), "git_repository": runtime().tools.git.is_repository(), "dry_run_default": cfg.dry_run_default, "limits": {"max_iterations": cfg.max_iterations, "max_wall_clock_seconds": cfg.max_wall_clock_seconds, "max_output_tokens_per_turn": cfg.max_output_tokens_per_turn, "max_total_tokens_per_session": cfg.max_total_tokens_per_session, "max_file_read_bytes": cfg.max_file_read_bytes, "max_file_write_bytes": cfg.max_file_write_bytes}, "rate_limit": {"rpm": cfg.rate_limit_rpm, "max_concurrent_requests": cfg.max_concurrent_requests, "cooldown_seconds": cfg.cooldown_seconds}, "execution": {"os_sandbox_required": cfg.exec_require_os_sandbox, "allowlist": sorted(cfg.allowed_commands)}}
+    return {
+        "workspace_root": str(cfg.workspace_root),
+        "git_repository": runtime().tools.git.is_repository(),
+        "dry_run_default": cfg.dry_run_default,
+        "limits": {
+            "max_iterations": cfg.max_iterations,
+            "max_wall_clock_seconds": cfg.max_wall_clock_seconds,
+            "max_output_tokens_per_turn": cfg.max_output_tokens_per_turn,
+            "max_total_tokens_per_session": cfg.max_total_tokens_per_session,
+            "max_file_read_bytes": cfg.max_file_read_bytes,
+            "max_file_write_bytes": cfg.max_file_write_bytes,
+        },
+        "rate_limit": {
+            "rpm": cfg.rate_limit_rpm,
+            "max_concurrent_requests": cfg.max_concurrent_requests,
+            "cooldown_seconds": cfg.cooldown_seconds,
+        },
+        "execution": {
+            "os_sandbox_required": cfg.exec_require_os_sandbox,
+            "unshare_available": bool(runtime().tools.exec.unshare),
+            "allowlist": sorted(cfg.allowed_commands),
+        },
+    }
 
 @app.get("/api/rate-status")
 async def rate_status() -> dict[str, Any]: return asdict(await runtime().limiter.status())
