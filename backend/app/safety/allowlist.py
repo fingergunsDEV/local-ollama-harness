@@ -12,6 +12,7 @@ class CommandDenied(PermissionError):
 
 
 SHELL_META = re.compile(r"[;&|`$()<>\n\r]")
+OBFUSCATION_PATTERNS = re.compile(r"(base64\s+(-[dD]|--decode)|eval\(|exec\(|LD_PRELOAD|LD_LIBRARY_PATH|PYTHONPATH)", re.IGNORECASE)
 GIT_ALLOWED = {"status", "diff", "log", "add", "commit", "branch", "checkout"}
 GIT_FORBIDDEN = {"push", "fetch", "pull", "reset", "clean", "rebase", "remote", "config", "-D", "-d"}
 
@@ -31,6 +32,8 @@ class CommandAllowlist:
             raise CommandDenied(f"binary is not in EXEC_ALLOWLIST: {binary}")
         if any("\x00" in arg or SHELL_META.search(arg) for arg in argv):
             raise CommandDenied("shell metacharacters, newlines, and null bytes are denied")
+        if any(OBFUSCATION_PATTERNS.search(arg) for arg in argv):
+            raise CommandDenied("command obfuscation or dynamic code execution pattern is denied")
         if binary == "git":
             self._validate_git(argv)
         if binary in {"python3", "node", "npm", "pip"}:
