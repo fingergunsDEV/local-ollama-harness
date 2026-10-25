@@ -9,6 +9,10 @@ def test_rejects_shell_injection(settings, sandbox):
     with pytest.raises(CommandDenied): policy(settings, sandbox).validate(["ls", ";id"])
     with pytest.raises(CommandDenied): policy(settings, sandbox).validate(["grep", "$(whoami)"])
 
+def test_rejects_obfuscation_patterns(settings, sandbox):
+    with pytest.raises(CommandDenied): policy(settings, sandbox).validate(["grep", "base64 -d", "file.txt"])
+    with pytest.raises(CommandDenied): policy(settings, sandbox).validate(["ls", "LD_PRELOAD=/tmp/lib.so"])
+
 def test_rejects_unlisted_and_runtime_binaries(settings, sandbox):
     with pytest.raises(CommandDenied): policy(settings, sandbox).validate(["sh", "-c", "id"])
     with pytest.raises(CommandDenied): policy(settings, sandbox).validate(["python3", "script.py"])
