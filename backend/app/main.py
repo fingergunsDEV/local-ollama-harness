@@ -110,6 +110,10 @@ async def public_settings() -> dict[str, Any]:
 @app.get("/api/rate-status")
 async def rate_status() -> dict[str, Any]: return asdict(await runtime().limiter.status())
 
+@app.get("/api/index/status")
+async def index_status() -> dict[str, Any]:
+    return LocalIndexer(runtime().settings, runtime().tools.sandbox, runtime().store).get_status()
+
 @app.post("/api/index/refresh")
 async def refresh_index() -> dict[str, Any]:
     return LocalIndexer(runtime().settings, runtime().tools.sandbox, runtime().store).refresh()

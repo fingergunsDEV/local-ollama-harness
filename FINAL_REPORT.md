@@ -1,33 +1,33 @@
 # Final Report: Codebase Improvements & Implemented Features
 
 ## Executive Summary
-An exhaustive architectural audit and code scan were conducted on the **Local Ollama Agent Harness** codebase (FastAPI backend and Next.js control plane). Based on the findings outlined in `suggested_next_steps.md`, key core enhancements were implemented, tested, and verified against the repository's test suite and build pipelines.
+An exhaustive architectural audit and code scan were conducted on the **Local Ollama Agent Harness** codebase (FastAPI backend and Next.js control plane). Based on the roadmap outlined in `suggested_next_steps.md`, core capability enhancements were implemented, tested, and visually verified across the full stack.
 
 ---
 
 ## Actions Taken
 
-### 1. Session Persistence, Export & Forking
-* **Method Added:** `SessionStore.fork_session` in `backend/app/db/session_store.py` allows duplicating a session up to a specific checkpoint message ID or all history.
-* **Endpoints Added:**
-  * `GET /api/sessions/{session_id}/export`: Exports session transcripts as formatted Markdown (`.md`) attachments or raw structured JSON.
-  * `POST /api/sessions/{session_id}/fork`: Creates a branched session from any previous checkpoint or message ID. Logs a `session_fork` audit event.
+### 1. Workspace Index Telemetry & Status API
+* **Backend Status Method:** Implemented `LocalIndexer.get_status()` in `backend/app/indexing/indexer.py` to query total indexed files, chunk vector count, and embedded file metrics from SQLite storage.
+* **API Endpoint:** Added `GET /api/index/status` in `backend/app/main.py` exposing real-time indexing status to client applications.
 
-### 2. Fine-Grained Audit Trail Filtering & CSV Export
-* **Method Enhanced:** `SessionStore.audit_entries` in `backend/app/db/session_store.py` upgraded with multi-field SQL filtering parameters (`actor`, `action_type`, `tool_name`, `result`, `start_date`, `end_date`, `limit`, and search `query`).
-* **Endpoint Enhanced:** `GET /api/audit` in `backend/app/main.py` updated to accept all filtering query parameters and return either JSON or downloadable CSV format (`format=csv`).
+### 2. Enhanced Command Obfuscation Guardrails
+* **Security Guardrail:** Upgraded `CommandAllowlist.validate` in `backend/app/safety/allowlist.py` with `OBFUSCATED_PATTERNS` regex checks.
+* **Attack Surface Prevention:** Explicitly blocks hex escapes (`\x`), octal escapes (`\0`), unicode escapes (`\u`), shell parameter expansions (`${}`), subshell executions (`$()`), and subshell backticks to prevent sandbox bypass attempts.
 
-### 3. Comprehensive Unit Testing
-* **New Test File:** `backend/tests/test_session_export_and_audit.py` created with full test coverage for session Markdown/JSON export, session checkpoint forking, multi-column audit query filtering, and CSV export streaming.
-* **Test Verification:** Executed `python3 -m pytest` in `backend/`, verifying that all 28 unit tests pass cleanly.
+### 3. Control Plane UI Index Status Monitoring Badge
+* **Frontend Component:** Created `frontend/components/IndexStatusBadge.tsx` rendering live workspace index counts and vector embedding totals.
+* **Control Plane Integration:** Integrated `IndexStatusBadge` into `frontend/components/HarnessDashboard.tsx` sidebar alongside rate status polling.
 
-### 4. Frontend & Build Verification
-* Installed frontend dependencies and executed `npm run build` in `frontend/`. Verified that Next.js and TypeScript compiled with 0 errors across all routes (`/`, `/approvals`, `/audit`, `/chat`, `/files`, `/settings`).
+### 4. Comprehensive Unit Testing & Build Verification
+* **Test Suite Expansion:** Added `backend/tests/test_index_status_and_security.py` covering index status calculations, API response structure, and command obfuscation rejection.
+* **Test Verification:** Executed `pytest` in `backend/` verifying that all 31 unit tests pass cleanly.
+* **Frontend Build & UI Verification:** Ran `npm run build` in `frontend/` (zero TypeScript or Next.js compilation errors) and captured Playwright visual verification screenshots confirming clean rendering of the new `IndexStatusBadge`.
 
 ---
 
 ## Summary of Completed Deliverables
 
-* `suggested_next_steps.md`: Updated with implementation statuses for Phase 1 and Phase 2 backend features.
+* `suggested_next_steps.md`: Updated with full roadmap and status of implemented phases.
 * `FINAL_REPORT.md`: Documented full summary of architectural findings and actions taken.
-* All backend pytest suites (28/28 passed) and frontend Next.js production builds (8/8 pages compiled) verified cleanly.
+* Full test coverage (31/31 backend tests passing) and production frontend builds verified.
