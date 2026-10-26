@@ -112,3 +112,16 @@ class LocalIndexer:
 
         results.sort(key=lambda x: x[0], reverse=True)
         return [item[1] for item in results[:top_k]]
+
+    def get_status(self) -> dict[str, Any]:
+        """Return counts of indexed workspace files and chunk embeddings."""
+        with self.store._lock, self.store._connect() as conn:
+            total_files = conn.execute("SELECT COUNT(*) FROM file_index").fetchone()[0]
+            total_chunks = conn.execute("SELECT COUNT(*) FROM file_embeddings").fetchone()[0]
+            embedded_files = conn.execute("SELECT COUNT(DISTINCT path) FROM file_embeddings").fetchone()[0]
+        return {
+            "total_files_indexed": total_files,
+            "total_embeddings": total_chunks,
+            "embedded_files_count": embedded_files,
+            "max_files_limit": self.settings.max_files_indexed,
+        }
