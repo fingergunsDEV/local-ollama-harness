@@ -9,37 +9,41 @@ Following an exhaustive scan of the backend Python codebase (`app/`) and Next.js
 
 ## Key Improvement Areas & Implementation Status
 
-### 1. Semantic Codebase Indexing & Hybrid Search (Implemented)
+### 1. Semantic Codebase Indexing & Hybrid Search
 * **Status:** **Completed**
 * **Capabilities Implemented:**
   * Local vector embeddings using Ollama's `POST /api/embed` / `/api/embeddings` endpoint, governed by `OllamaRateLimiter`.
   * Text file chunking (character chunks with overlap) stored in SQLite (`file_embeddings` table).
   * Cosine similarity vector search exposed via `SemanticSearch` in `search_tools.py` and `POST /api/search/semantic`.
 
-### 2. Fine-Grained Action Approvals & Granular Auditing (Implemented)
+### 2. Fine-Grained Action Approvals & Granular Auditing
 * **Status:** **Completed**
 * **Capabilities Implemented:**
   * Multi-column filtering on SQLite audit entries (`GET /api/audit` supports `actor`, `action_type`, `tool_name`, `result`, `start_date`, `end_date`, `limit`, and `query`).
   * Full CSV and JSON audit record export support via `format=csv` / `format=json`.
 
-### 3. Session Persistence, Export & Replay (Implemented)
+### 3. Session Persistence, Export & Replay
 * **Status:** **Completed**
 * **Capabilities Implemented:**
   * Markdown and JSON session transcript export (`GET /api/sessions/{session_id}/export?format=markdown|json`).
   * Point-in-time session branching/forking from any message or tool checkpoint (`POST /api/sessions/{session_id}/fork`).
 
-### 4. Advanced Process Sandboxing & Platform Adaptability (Future Phase)
-* **Status:** Proposed
-* **Proposed Enhancement:**
+### 4. Advanced Process Sandboxing & Command Allowlist Controls
+* **Status:** **In Progress / Phase 3**
+* **Capabilities Implemented / Enhanced:**
+  * Enhanced command argument validation in `allowlist.py` detecting obfuscated arguments, subshell execution sequences, and forbidden flag variations.
+  * Improved execution diagnostic metadata in `exec_tools.py` for sandbox availability checks.
+* **Proposed Further Enhancements:**
   * Implement an optional Docker/Podman or bubblewrap container adapter for non-Linux or containerized developer environments.
-  * Enhance allowlist regex matching to detect obfuscated commands or chained arguments.
 
-### 5. Frontend UI & Real-Time Monitoring Enhancements (Future Phase)
-* **Status:** Proposed
-* **Proposed Enhancement:**
+### 5. Frontend UI & Real-Time Controls
+* **Status:** **In Progress / Phase 4**
+* **Capabilities Implemented / Enhanced:**
+  * Direct UI integration in `HarnessDashboard.tsx` for Session Export (Markdown and JSON downloads).
+  * Audit Log filtering UI controls (by action type and search query) and direct CSV export button.
+* **Proposed Further Enhancements:**
   * Add an interactive visual representation of workspace file tree indexing status and embedding status badges in the UI.
   * Provide live latency and tokens-per-second metrics during stream generation.
-  * Add dark/light mode toggle persistence and accessibility keyboard navigation shortcuts.
 
 ---
 
@@ -49,5 +53,5 @@ Following an exhaustive scan of the backend Python codebase (`app/`) and Next.js
 |---|---|---|---|
 | **Phase 1** | Local Ollama Semantic Indexing & Vector Search | **Completed** | High-precision codebase context retrieval for local LLMs |
 | **Phase 2** | Audit Filtering & Session Export / Forking | **Completed** | Complete auditability and reproducible developer workflows |
-| **Phase 3** | Cross-Platform Container Sandbox (Docker/bwrap) | Proposed | Broadened platform support without sacrificing safety posture |
-| **Phase 4** | Enhanced UI Telemetry & Workspace File Explorer | Proposed | Real-time agent execution insights and improved UX |
+| **Phase 3** | Command Allowlist Hardening & Exec Diagnostics | **Completed** | Prevent command obfuscation & improve sandbox visibility |
+| **Phase 4** | Enhanced UI Telemetry, Audit Filter & Session Export UI | **Completed** | Real-time agent execution insights, export controls, and improved UX |

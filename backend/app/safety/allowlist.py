@@ -31,6 +31,8 @@ class CommandAllowlist:
             raise CommandDenied(f"binary is not in EXEC_ALLOWLIST: {binary}")
         if any("\x00" in arg or SHELL_META.search(arg) for arg in argv):
             raise CommandDenied("shell metacharacters, newlines, and null bytes are denied")
+        if any(arg.startswith("-o") or arg.startswith("--upload") or "eval(" in arg or "exec(" in arg for arg in argv):
+            raise CommandDenied("suspicious argument or inline command evaluation attempt denied")
         if binary == "git":
             self._validate_git(argv)
         if binary in {"python3", "node", "npm", "pip"}:

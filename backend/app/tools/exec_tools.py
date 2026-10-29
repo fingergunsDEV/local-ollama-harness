@@ -48,7 +48,13 @@ exec /usr/sbin/chroot "$root" /usr/bin/env -i PATH=/usr/bin:/bin HOME=/workspace
     def execute(self, argv: list[str], dry_run: bool = True) -> dict[str, Any]:
         validated = self.allowlist.validate(argv)
         if dry_run:
-            return {"applied": False, "dry_run": True, "action": "exec", "plan": command_plan(validated)}
+            return {
+                "applied": False,
+                "dry_run": True,
+                "action": "exec",
+                "plan": command_plan(validated),
+                "sandbox_available": bool(self.unshare),
+            }
         if self.settings.exec_require_os_sandbox and not self.unshare:
             raise PermissionError("exec is fail-closed: required Linux unshare sandbox adapter is unavailable")
         if not self.unshare:
