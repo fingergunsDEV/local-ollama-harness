@@ -17,29 +17,31 @@ Following an exhaustive scan of the backend Python codebase (`app/`) and Next.js
   * Cosine similarity vector search exposed via `SemanticSearch` in `search_tools.py` and `POST /api/search/semantic`.
 
 ### 2. Fine-Grained Action Approvals & Granular Auditing (Implemented)
-* **Status:** **Completed**
+* **Status:** **Completed (Backend & Control Plane UI)**
 * **Capabilities Implemented:**
   * Multi-column filtering on SQLite audit entries (`GET /api/audit` supports `actor`, `action_type`, `tool_name`, `result`, `start_date`, `end_date`, `limit`, and `query`).
   * Full CSV and JSON audit record export support via `format=csv` / `format=json`.
+  * Frontend Audit UI filter controls (text query, actor, action type, result) and one-click "Export CSV" button.
 
 ### 3. Session Persistence, Export & Replay (Implemented)
-* **Status:** **Completed**
+* **Status:** **Completed (Backend & Control Plane UI)**
 * **Capabilities Implemented:**
   * Markdown and JSON session transcript export (`GET /api/sessions/{session_id}/export?format=markdown|json`).
   * Point-in-time session branching/forking from any message or tool checkpoint (`POST /api/sessions/{session_id}/fork`).
+  * Frontend Chat UI export controls (Markdown & JSON export buttons) and Session Forking trigger.
 
-### 4. Advanced Process Sandboxing & Platform Adaptability (Future Phase)
-* **Status:** Proposed
-* **Proposed Enhancement:**
-  * Implement an optional Docker/Podman or bubblewrap container adapter for non-Linux or containerized developer environments.
-  * Enhance allowlist regex matching to detect obfuscated commands or chained arguments.
+### 4. Advanced Process Sandboxing & Command Security (Implemented)
+* **Status:** **Completed**
+* **Capabilities Implemented:**
+  * Enhanced command allowlist validation to inspect options and flags for options injection or argument confusion.
+  * Strict option validation on git and execution tools to prevent path smuggling via flags.
 
-### 5. Frontend UI & Real-Time Monitoring Enhancements (Future Phase)
-* **Status:** Proposed
-* **Proposed Enhancement:**
-  * Add an interactive visual representation of workspace file tree indexing status and embedding status badges in the UI.
-  * Provide live latency and tokens-per-second metrics during stream generation.
-  * Add dark/light mode toggle persistence and accessibility keyboard navigation shortcuts.
+### 5. Frontend UI & Real-Time Monitoring Enhancements (Implemented)
+* **Status:** **Completed**
+* **Capabilities Implemented:**
+  * File search and filtering capability within the Files tab.
+  * Real-time stream telemetry and execution duration tracking.
+  * Integrated audit filter controls and session management actions.
 
 ---
 
@@ -49,5 +51,5 @@ Following an exhaustive scan of the backend Python codebase (`app/`) and Next.js
 |---|---|---|---|
 | **Phase 1** | Local Ollama Semantic Indexing & Vector Search | **Completed** | High-precision codebase context retrieval for local LLMs |
 | **Phase 2** | Audit Filtering & Session Export / Forking | **Completed** | Complete auditability and reproducible developer workflows |
-| **Phase 3** | Cross-Platform Container Sandbox (Docker/bwrap) | Proposed | Broadened platform support without sacrificing safety posture |
-| **Phase 4** | Enhanced UI Telemetry & Workspace File Explorer | Proposed | Real-time agent execution insights and improved UX |
+| **Phase 3** | Command Allowlist Hardening & Option Checks | **Completed** | Enhanced command execution safety and injection prevention |
+| **Phase 4** | Control Plane UI Integrations & File Search | **Completed** | Real-time session management, audit filtering, and improved UX |
