@@ -20,5 +20,9 @@ def test_rejects_git_remote_and_history_destruction(settings, sandbox):
     with pytest.raises(CommandDenied): policy(settings, sandbox).validate(["git", "push"])
     with pytest.raises(CommandDenied): policy(settings, sandbox).validate(["git", "reset", "--hard"])
 
+def test_rejects_forbidden_git_flags(settings, sandbox):
+    with pytest.raises(CommandDenied): policy(settings, sandbox).validate(["git", "-c", "core.editor=calc", "status"])
+    with pytest.raises(CommandDenied): policy(settings, sandbox).validate(["git", "--config=core.editor=calc", "status"])
+
 def test_accepts_safe_read_only_argv(settings, sandbox):
     assert policy(settings, sandbox).validate(["ls", "src"]) == ["ls", "src"]

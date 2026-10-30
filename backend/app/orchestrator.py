@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -49,6 +50,7 @@ class AgentOrchestrator:
         self.audit.log(session_id=session_id, actor="user", action_type="chat", tool_name=None, target=None, result="success", dry_run=session["dry_run"], params={"message_length": len(user_content)})
         system_instruction = SYSTEM_PROMPT if native_tools else SYSTEM_PROMPT + "\n\n" + REACT_SUFFIX
         messages = [{"role": "system", "content": system_instruction}] + [{"role": item["role"], "content": item["content"]} for item in self.store.messages(session_id)]
+        start_time = time.monotonic()
         try:
             while True:
                 budget.take_iteration()
@@ -77,7 +79,8 @@ class AgentOrchestrator:
                         continue
                     tool_calls = [{"function": {"name": parsed["action"], "arguments": parsed["arguments"]}}]
                 if not tool_calls:
-                    yield {"type": "run_complete", "status": "completed", "remaining_iterations": budget.remaining_iterations}
+                    elapsed = round(time.monotonic() - start_time, 2)
+                    yield {"type": "run_complete", "status": "completed", "remaining_iterations": budget.remaining_iterations, "elapsed_seconds": elapsed}
                     break
                 messages.append({"role": "assistant", "content": text, "tool_calls": tool_calls})
                 for tool_call in tool_calls:

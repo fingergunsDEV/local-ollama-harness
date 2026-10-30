@@ -35,3 +35,4 @@ tests/test_limits.py
 tests/test_orchestrator.py
 tests/test_rate_limiter.py
 tests/test_sandbox.py
+tests/test_session_export_and_audit.py
