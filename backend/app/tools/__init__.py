@@ -19,6 +19,7 @@ TOOL_SCHEMAS = [
  {"type":"function","function":{"name":"list_files","description":"List a workspace subtree.","parameters":{"type":"object","properties":{"path":{"type":"string"},"depth":{"type":"integer","minimum":0,"maximum":10}},"additionalProperties":False}}},
  {"type":"function","function":{"name":"keyword_search","description":"Search text files by a case-insensitive keyword.","parameters":{"type":"object","properties":{"query":{"type":"string"},"path":{"type":"string"},"max_results":{"type":"integer","minimum":1,"maximum":500}},"required":["query"],"additionalProperties":False}}},
  {"type":"function","function":{"name":"write_file","description":"Replace a text file; returns a proposed diff in dry-run mode.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"],"additionalProperties":False}}},
+ {"type":"function","function":{"name":"patch_file","description":"Selectively replace a specific unique block of text inside a file; returns a proposed diff in dry-run mode.","parameters":{"type":"object","properties":{"path":{"type":"string"},"search":{"type":"string"},"replace":{"type":"string"}},"required":["path","search","replace"],"additionalProperties":False}}},
  {"type":"function","function":{"name":"create_file","description":"Create a new text file; returns a plan in dry-run mode.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path"],"additionalProperties":False}}},
  {"type":"function","function":{"name":"delete_file","description":"Delete a regular file; returns a plan in dry-run mode.","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":False}}},
  {"type":"function","function":{"name":"git","description":"Run a restricted local git argv only. Remote and destructive history operations are unavailable.","parameters":{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"minItems":2}},"required":["argv"],"additionalProperties":False}}},
@@ -38,13 +39,14 @@ class ToolRegistry:
         self._handlers: dict[str, Callable[..., dict[str, Any]]] = {
             "read_file": self.files.read_file, "list_files": self.files.list_files, "stat_file": self.files.stat_file,
             "keyword_search": self.search.keyword_search, "write_file": self.files.write_file,
+            "patch_file": self.files.patch_file,
             "create_file": self.files.create_file, "delete_file": self.files.delete_file,
             "git": self.git.execute, "exec": self.exec.execute,
         }
 
     @staticmethod
     def action_type(name: str, args: dict[str, Any]) -> str | None:
-        if name in {"write_file", "create_file"}: return "write"
+        if name in {"write_file", "patch_file", "create_file"}: return "write"
         if name == "delete_file": return "delete"
         if name == "exec": return "exec"
         if name == "git":
@@ -55,9 +57,25 @@ class ToolRegistry:
     def execute(self, name: str, args: dict[str, Any], dry_run: bool) -> dict[str, Any]:
         if name not in self._handlers: raise ValueError(f"unknown tool: {name}")
         handler = self._handlers[name]
-        if name in {"write_file", "create_file", "delete_file", "git", "exec"}:
+        if name in {"write_file", "patch_file", "create_file", "delete_file", "git", "exec"}:
             return handler(**args, dry_run=dry_run)
         return handler(**args)
+
+    def list_snapshots(self) -> list[dict[str, Any]]:
+        """List active file backups stored in .harness-snapshots."""
+        snapshots_dir = self.sandbox.root / ".harness-snapshots"
+        if not snapshots_dir.is_dir():
+            return []
+        results: list[dict[str, Any]] = []
+        for item in sorted(snapshots_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+            if item.is_file():
+                stat = item.stat()
+                results.append({
+                    "id": item.name,
+                    "size": stat.st_size,
+                    "created_at": stat.st_mtime,
+                })
+        return results
 
     def snapshot(self, session_id: str, target_path: str | None) -> str | None:
         """Create a controlled pre-change copy stored inside a denied harness directory."""

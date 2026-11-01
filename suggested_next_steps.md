@@ -28,13 +28,26 @@ Following an exhaustive scan of the backend Python codebase (`app/`) and Next.js
   * Markdown and JSON session transcript export (`GET /api/sessions/{session_id}/export?format=markdown|json`).
   * Point-in-time session branching/forking from any message or tool checkpoint (`POST /api/sessions/{session_id}/fork`).
 
-### 4. Advanced Process Sandboxing & Platform Adaptability (Future Phase)
+### 4. Surgical File Patching & Targeted Code Edits (Implemented)
+* **Status:** **Completed**
+* **Capabilities Implemented:**
+  * Targeted search-and-replace edits via `patch_file` (`FileTools.patch_file`) preventing full file overwrites.
+  * Strict validation guaranteeing the search block is unique in the target file.
+  * Dry-run unified diff generation and integration with approval gating under the `"write"` action type.
+
+### 5. Snapshot Discovery & Inspection API (Implemented)
+* **Status:** **Completed**
+* **Capabilities Implemented:**
+  * Added `ToolRegistry.list_snapshots` and `GET /api/snapshots` to list available `.harness-snapshots` backups with metadata (id, size, created_at).
+  * Allows operators to inspect active pre-change snapshots prior to executing rollback via `POST /api/snapshots/restore`.
+
+### 6. Advanced Process Sandboxing & Platform Adaptability (Future Phase)
 * **Status:** Proposed
 * **Proposed Enhancement:**
   * Implement an optional Docker/Podman or bubblewrap container adapter for non-Linux or containerized developer environments.
   * Enhance allowlist regex matching to detect obfuscated commands or chained arguments.
 
-### 5. Frontend UI & Real-Time Monitoring Enhancements (Future Phase)
+### 7. Frontend UI & Real-Time Monitoring Enhancements (Future Phase)
 * **Status:** Proposed
 * **Proposed Enhancement:**
   * Add an interactive visual representation of workspace file tree indexing status and embedding status badges in the UI.
@@ -49,5 +62,6 @@ Following an exhaustive scan of the backend Python codebase (`app/`) and Next.js
 |---|---|---|---|
 | **Phase 1** | Local Ollama Semantic Indexing & Vector Search | **Completed** | High-precision codebase context retrieval for local LLMs |
 | **Phase 2** | Audit Filtering & Session Export / Forking | **Completed** | Complete auditability and reproducible developer workflows |
-| **Phase 3** | Cross-Platform Container Sandbox (Docker/bwrap) | Proposed | Broadened platform support without sacrificing safety posture |
-| **Phase 4** | Enhanced UI Telemetry & Workspace File Explorer | Proposed | Real-time agent execution insights and improved UX |
+| **Phase 3** | Surgical File Patching & Snapshot Management API | **Completed** | Efficient targeted edits and snapshot inspection for operators |
+| **Phase 4** | Cross-Platform Container Sandbox (Docker/bwrap) | Proposed | Broadened platform support without sacrificing safety posture |
+| **Phase 5** | Enhanced UI Telemetry & Workspace File Explorer | Proposed | Real-time agent execution insights and improved UX |
