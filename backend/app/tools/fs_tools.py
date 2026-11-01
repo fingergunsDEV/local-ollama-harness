@@ -53,6 +53,28 @@ class FileTools:
         target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(raw)
         return {"applied": True, "dry_run": False, "action": "write", "path": self.sandbox.display(target), "diff": diff}
 
+    def patch_file(self, path: str, search: str, replace: str, dry_run: bool = True) -> dict[str, Any]:
+        target = self.sandbox.resolve(path)
+        self.sandbox.ensure_regular_file(target)
+        if not target.exists():
+            raise FileNotFoundError(f"cannot patch non-existent file: {path}")
+        if not search:
+            raise ValueError("search string cannot be empty")
+        before = target.read_text(encoding="utf-8", errors="replace")
+        count = before.count(search)
+        if count == 0:
+            raise ValueError(f"search block not found in file: {path}")
+        if count > 1:
+            raise ValueError(f"search block occurs {count} times; patch must be unique")
+        after = before.replace(search, replace, 1)
+        raw = after.encode("utf-8")
+        ensure_write_size(len(raw), self.settings)
+        diff = unified_diff(self.sandbox.display(target), before, after)
+        if dry_run:
+            return {"applied": False, "dry_run": True, "action": "patch", "path": self.sandbox.display(target), "diff": diff}
+        target.write_bytes(raw)
+        return {"applied": True, "dry_run": False, "action": "patch", "path": self.sandbox.display(target), "diff": diff}
+
     def create_file(self, path: str, content: str = "", dry_run: bool = True) -> dict[str, Any]:
         target = self.sandbox.resolve(path)
         if target.exists(): raise FileExistsError("file already exists; use write_file")

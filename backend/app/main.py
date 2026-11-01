@@ -215,6 +215,10 @@ async def resolve_approval(approval_id: str, request: ApprovalResolve) -> dict[s
     runtime().audit.log(session_id=pending["session_id"], actor="user", action_type="approval_resolve", tool_name=None, target=pending["tool_call_id"], result="approved" if request.approved else "denied", dry_run=False)
     return {"id": approval_id, "status": "approved" if request.approved else "denied"}
 
+@app.get("/api/snapshots")
+async def list_snapshots() -> dict[str, Any]:
+    return {"snapshots": runtime().tools.list_snapshots()}
+
 @app.post("/api/snapshots/restore")
 async def restore_snapshot(request: SnapshotRestore) -> dict[str, Any]:
     try:
