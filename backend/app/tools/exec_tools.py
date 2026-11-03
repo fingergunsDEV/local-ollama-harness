@@ -44,16 +44,97 @@ exec /usr/sbin/chroot "$root" /usr/bin/env -i PATH=/usr/bin:/bin HOME=/workspace
     def __init__(self, settings: Settings, sandbox: WorkspaceSandbox, allowlist: CommandAllowlist) -> None:
         self.settings, self.sandbox, self.allowlist = settings, sandbox, allowlist
         self.unshare = shutil.which("unshare")
+        self.bwrap = shutil.which("bwrap")
+
+    def _resolve_adapter(self) -> str:
+        preference = self.settings.exec_sandbox_adapter.lower()
+        if preference == "bubblewrap":
+            if not self.bwrap:
+                raise PermissionError("exec is fail-closed: required bubblewrap (bwrap) adapter is unavailable")
+            return "bubblewrap"
+        if preference == "unshare":
+            if not self.unshare:
+                raise PermissionError("exec is fail-closed: required Linux unshare sandbox adapter is unavailable")
+            return "unshare"
+        # auto mode: prefer unshare, fallback to bubblewrap if available
+        if self.unshare:
+            return "unshare"
+        if self.bwrap:
+            return "bubblewrap"
+        if self.settings.exec_require_os_sandbox:
+            raise PermissionError("exec is fail-closed: no OS sandbox adapter (unshare/bwrap) is available")
+        raise PermissionError("exec requires an OS sandbox adapter")
 
     def execute(self, argv: list[str], dry_run: bool = True) -> dict[str, Any]:
         validated = self.allowlist.validate(argv)
         if dry_run:
             return {"applied": False, "dry_run": True, "action": "exec", "plan": command_plan(validated)}
-        if self.settings.exec_require_os_sandbox and not self.unshare:
-            raise PermissionError("exec is fail-closed: required Linux unshare sandbox adapter is unavailable")
-        if not self.unshare:
-            raise PermissionError("exec requires the Linux unshare sandbox adapter")
+        adapter = self._resolve_adapter()
+        if adapter == "bubblewrap":
+            return self._run_in_bubblewrap(validated)
         return self._run_in_namespace(validated)
+
+    def _run_in_bubblewrap(self, argv: list[str]) -> dict[str, Any]:
+        assert self.bwrap is not None
+        command = [
+            self.bwrap,
+            "--unshare-all",
+            "--unshare-net",
+            "--ro-bind", "/usr", "/usr",
+            "--symlink", "usr/bin", "/bin",
+            "--symlink", "usr/lib", "/lib",
+            "--symlink", "usr/lib64", "/lib64",
+            "--symlink", "usr/sbin", "/sbin",
+            "--proc", "/proc",
+            "--dev", "/dev",
+            "--tmpfs", "/tmp",
+            "--bind", str(self.sandbox.root), "/workspace",
+            "--chdir", "/workspace",
+            "--clearenv",
+            "--setenv", "PATH", "/usr/bin:/bin",
+            "--setenv", "HOME", "/workspace",
+            "--setenv", "LANG", "C.UTF-8",
+            "--setenv", "LC_ALL", "C.UTF-8",
+            "--",
+            *argv
+        ]
+        process = subprocess.Popen(
+            command,
+            cwd=self.sandbox.root,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+            shell=False
+        )
+        try:
+            stdout, stderr = process.communicate(timeout=self.settings.exec_timeout_seconds)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            stdout, stderr = process.communicate()
+            return {
+                "applied": True,
+                "dry_run": False,
+                "action": "exec",
+                "argv": argv,
+                "returncode": None,
+                "timed_out": True,
+                "sandbox": "bubblewrap",
+                "stdout": stdout[-20_000:],
+                "stderr": stderr[-10_000:]
+            }
+        return {
+            "applied": True,
+            "dry_run": False,
+            "action": "exec",
+            "argv": argv,
+            "returncode": process.returncode,
+            "timed_out": False,
+            "sandbox": "bubblewrap",
+            "stdout": stdout[-20_000:],
+            "stderr": stderr[-10_000:]
+        }
 
     def _run_in_namespace(self, argv: list[str]) -> dict[str, Any]:
         with tempfile.TemporaryDirectory(prefix="ollama-harness-exec-") as temp_root:

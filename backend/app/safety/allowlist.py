@@ -12,6 +12,12 @@ class CommandDenied(PermissionError):
 
 
 SHELL_META = re.compile(r"[;&|`$()<>\n\r]")
+OBFUSCATION_PATTERNS = [
+    re.compile(r"\\x[0-9a-fA-F]{2}"),          # Hex escapes like \x2f
+    re.compile(r"\\[0-7]{3}"),                 # Octal escapes like \057
+    re.compile(r"\$['\"]"),                    # ANSI-C quoting $'...' or $"..."
+    re.compile(r"(?:base64\s+-d|base64\s+--decode)"), # Inline base64 decoding attempts
+]
 GIT_ALLOWED = {"status", "diff", "log", "add", "commit", "branch", "checkout"}
 GIT_FORBIDDEN = {"push", "fetch", "pull", "reset", "clean", "rebase", "remote", "config", "-D", "-d"}
 
@@ -29,6 +35,10 @@ class CommandAllowlist:
         binary = argv[0]
         if Path(binary).name != binary or binary not in self.allowed:
             raise CommandDenied(f"binary is not in EXEC_ALLOWLIST: {binary}")
+        for arg in argv:
+            for pattern in OBFUSCATION_PATTERNS:
+                if pattern.search(arg):
+                    raise CommandDenied(f"obfuscated or encoded command argument pattern detected: {arg}")
         if any("\x00" in arg or SHELL_META.search(arg) for arg in argv):
             raise CommandDenied("shell metacharacters, newlines, and null bytes are denied")
         if binary == "git":
