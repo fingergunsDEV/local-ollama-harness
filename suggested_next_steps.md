@@ -28,11 +28,12 @@ Following an exhaustive scan of the backend Python codebase (`app/`) and Next.js
   * Markdown and JSON session transcript export (`GET /api/sessions/{session_id}/export?format=markdown|json`).
   * Point-in-time session branching/forking from any message or tool checkpoint (`POST /api/sessions/{session_id}/fork`).
 
-### 4. Advanced Process Sandboxing & Platform Adaptability (Future Phase)
-* **Status:** Proposed
-* **Proposed Enhancement:**
-  * Implement an optional Docker/Podman or bubblewrap container adapter for non-Linux or containerized developer environments.
-  * Enhance allowlist regex matching to detect obfuscated commands or chained arguments.
+### 4. Advanced Process Sandboxing & Platform Adaptability (Implemented)
+* **Status:** **Completed**
+* **Capabilities Implemented:**
+  * Configurable multi-adapter OS sandboxing (`exec_sandbox_adapter: auto | unshare | bubblewrap`) with fail-closed safety semantics.
+  * Bubblewrap (`bwrap`) adapter running in unprivileged user/mount/pid/ipc/net namespaces with isolated `/tmp` tmpfs, read-only `/usr`, and read-write `/workspace`.
+  * Command obfuscation detection in `CommandAllowlist` rejecting hex/octal escapes (`\x2f`, `\057`), ANSI-C quoting (`$'...'`), and inline base64 decode attempts.
 
 ### 5. Frontend UI & Real-Time Monitoring Enhancements (Future Phase)
 * **Status:** Proposed
@@ -49,5 +50,5 @@ Following an exhaustive scan of the backend Python codebase (`app/`) and Next.js
 |---|---|---|---|
 | **Phase 1** | Local Ollama Semantic Indexing & Vector Search | **Completed** | High-precision codebase context retrieval for local LLMs |
 | **Phase 2** | Audit Filtering & Session Export / Forking | **Completed** | Complete auditability and reproducible developer workflows |
-| **Phase 3** | Cross-Platform Container Sandbox (Docker/bwrap) | Proposed | Broadened platform support without sacrificing safety posture |
+| **Phase 3** | Multi-Adapter Sandboxing (bwrap/unshare) & Anti-Obfuscation | **Completed** | Hardened execution isolation and detection of evasion techniques |
 | **Phase 4** | Enhanced UI Telemetry & Workspace File Explorer | Proposed | Real-time agent execution insights and improved UX |

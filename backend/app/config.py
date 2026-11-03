@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     # There is no safe fallback for arbitrary process execution without a separately
     # verified OS sandbox. The executor denies commands while this remains true.
     exec_require_os_sandbox: bool = True
+    exec_sandbox_adapter: str = "auto"
 
     require_approval_for: str = "write,delete,exec,git_commit,git_checkout"
     auto_approve: str = ""
@@ -60,6 +61,15 @@ class Settings(BaseSettings):
     backend_bind_host: str = "127.0.0.1"
     backend_port: int = Field(default=8000, ge=1, le=65535)
     frontend_origin: str = "http://localhost:3000"
+
+    @field_validator("exec_sandbox_adapter")
+    @classmethod
+    def validate_exec_sandbox_adapter(cls, value: str) -> str:
+        allowed = {"auto", "unshare", "bubblewrap"}
+        cleaned = value.strip().lower()
+        if cleaned not in allowed:
+            raise ValueError(f"exec_sandbox_adapter must be one of {allowed}, got: {value}")
+        return cleaned
 
     @field_validator("workspace_root")
     @classmethod

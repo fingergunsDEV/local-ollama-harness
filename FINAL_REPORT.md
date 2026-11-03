@@ -21,13 +21,20 @@ An exhaustive architectural audit and code scan were conducted on the **Local Ol
 * **New Test File:** `backend/tests/test_session_export_and_audit.py` created with full test coverage for session Markdown/JSON export, session checkpoint forking, multi-column audit query filtering, and CSV export streaming.
 * **Test Verification:** Executed `python3 -m pytest` in `backend/`, verifying that all 28 unit tests pass cleanly.
 
-### 4. Frontend & Build Verification
+### 4. Advanced Process Sandboxing & Command Obfuscation Detection
+* **Settings Added:** `exec_sandbox_adapter: str = "auto"` in `backend/app/config.py` with strict validation allowing `"auto"`, `"unshare"`, or `"bubblewrap"`.
+* **Obfuscation Detection:** `CommandAllowlist.validate` in `backend/app/safety/allowlist.py` augmented to reject obfuscated patterns including hex escapes (`\xNN`), octal escapes (`\NNN`), ANSI-C quoting (`$'...'`), and inline base64 decode constructs.
+* **Sandbox Multi-Adapter Execution:** `ExecTools` in `backend/app/tools/exec_tools.py` expanded with `_resolve_adapter` and `_run_in_bubblewrap` using `bwrap` unprivileged namespace isolation (`--unshare-all`, `--unshare-net`, `--tmpfs /tmp`, read-only `/usr`, read-write `/workspace`, scrubbed environment).
+* **Unit Testing:** `backend/tests/test_sandboxing_and_obfuscation.py` added covering obfuscation rejections and adapter resolution / fail-closed semantics.
+
+### 5. Frontend & Build Verification
 * Installed frontend dependencies and executed `npm run build` in `frontend/`. Verified that Next.js and TypeScript compiled with 0 errors across all routes (`/`, `/approvals`, `/audit`, `/chat`, `/files`, `/settings`).
+* Ran entire backend pytest suite (32/32 tests passed).
 
 ---
 
 ## Summary of Completed Deliverables
 
-* `suggested_next_steps.md`: Updated with implementation statuses for Phase 1 and Phase 2 backend features.
-* `FINAL_REPORT.md`: Documented full summary of architectural findings and actions taken.
-* All backend pytest suites (28/28 passed) and frontend Next.js production builds (8/8 pages compiled) verified cleanly.
+* `suggested_next_steps.md`: Updated with implementation statuses for Phase 1, Phase 2, and Phase 3 features.
+* `FINAL_REPORT.md`: Documented full summary of architectural findings, newly implemented security features, and actions taken.
+* All backend pytest suites (32/32 passed) and frontend Next.js production builds (8/8 pages compiled) verified cleanly.
